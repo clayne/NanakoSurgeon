@@ -1,16 +1,17 @@
+#include "nlohmann/json.hpp"
 #include <fstream>
 #include <wtypes.h>
-#include "nlohmann/json.hpp"
 using namespace RE;
 using std::ifstream;
-using std::unordered_map;
 using std::pair;
-using std::vector;
 using std::string;
+using std::unordered_map;
+using std::vector;
 
 class ProcessLists;
 
-struct TranslationData {
+struct TranslationData
+{
 	string bonename;
 	string bonenameorig;
 	NiPoint3 translation;
@@ -18,7 +19,8 @@ struct TranslationData {
 	bool ignoreXYZ;
 	bool insertion;
 	bool tponly;
-	TranslationData(string _b, string _balt, NiPoint3 _t, float _s, bool _ig, bool _i, bool _tp) {
+	TranslationData(string _b, string _balt, NiPoint3 _t, float _s, bool _ig, bool _i, bool _tp)
+	{
 		bonename = _b;
 		bonenameorig = _balt;
 		translation = _t;
@@ -29,16 +31,34 @@ struct TranslationData {
 	}
 };
 
+namespace RE
+{
+	class NiUpdateData
+	{
+	public:
+		uint32_t unk00;
+		uint32_t unk04;
+		uint64_t unk08;
+		uint64_t unk10;
+		uint32_t unk18;
+	};
+}
+
 REL::Relocation<uint64_t*> ptr_engineTime{ REL::ID(1280610) };
 REL::Relocation<ProcessLists*> ptr_processLists{ REL::ID(474742) };
+REL::Relocation<uintptr_t> ptr_RunActorUpdates{ REL::ID(556439), 0x17 };
+uintptr_t RunActorUpdatesOrig;
 PlayerCharacter* p;
 unordered_map<TESForm*, vector<TranslationData>> customRaceFemaleTranslations;
 unordered_map<TESForm*, vector<TranslationData>> customRaceMaleTranslations;
 unordered_map<TESForm*, vector<TranslationData>> customNPCTranslations;
-unordered_map<NiNode*, string> parentMap;
+unordered_map<uint32_t, float> customRaceFemaleScales;
+unordered_map<uint32_t, float> customRaceMaleScales;
+unordered_map<uint32_t, float> customNPCScales;
 
-char tempbuf[8192] = { 0 };
-char* _MESSAGE(const char* fmt, ...) {
+char tempbuf[1024] = { 0 };
+char* _MESSAGE(const char* fmt, ...)
+{
 	va_list args;
 
 	va_start(args, fmt);
@@ -49,7 +69,8 @@ char* _MESSAGE(const char* fmt, ...) {
 	return tempbuf;
 }
 
-void Dump(void* mem, unsigned int size) {
+void Dump(void* mem, unsigned int size)
+{
 	char* c = static_cast<char*>(mem);
 	unsigned char* up = (unsigned char*)c;
 	std::stringstream stream;
@@ -58,14 +79,14 @@ void Dump(void* mem, unsigned int size) {
 		stream << std::setfill('0') << std::setw(2) << std::hex << (int)up[i] << " ";
 		if (i % 8 == 7) {
 			stream << "\t0x"
-				<< std::setw(2) << std::hex << (int)up[i]
-				<< std::setw(2) << (int)up[i - 1]
-				<< std::setw(2) << (int)up[i - 2]
-				<< std::setw(2) << (int)up[i - 3]
-				<< std::setw(2) << (int)up[i - 4]
-				<< std::setw(2) << (int)up[i - 5]
-				<< std::setw(2) << (int)up[i - 6]
-				<< std::setw(2) << (int)up[i - 7] << std::setfill('0');
+				   << std::setw(2) << std::hex << (int)up[i]
+				   << std::setw(2) << (int)up[i - 1]
+				   << std::setw(2) << (int)up[i - 2]
+				   << std::setw(2) << (int)up[i - 3]
+				   << std::setw(2) << (int)up[i - 4]
+				   << std::setw(2) << (int)up[i - 5]
+				   << std::setw(2) << (int)up[i - 6]
+				   << std::setw(2) << (int)up[i - 7] << std::setfill('0');
 			stream << "\t0x" << std::setw(2) << std::hex << row * 8 << std::setfill('0');
 			_MESSAGE("%s", stream.str().c_str());
 			stream.str(std::string());
@@ -74,7 +95,8 @@ void Dump(void* mem, unsigned int size) {
 	}
 }
 
-TESForm* GetFormFromMod(std::string modname, uint32_t formid) {
+TESForm* GetFormFromMod(std::string modname, uint32_t formid)
+{
 	if (!modname.length() || !formid)
 		return nullptr;
 	TESDataHandler* dh = TESDataHandler::GetSingleton();
@@ -92,8 +114,7 @@ TESForm* GetFormFromMod(std::string modname, uint32_t formid) {
 	uint32_t id = formid;
 	if (modIndex < 0xFE) {
 		id |= ((uint32_t)modIndex) << 24;
-	}
-	else {
+	} else {
 		uint16_t lightModIndex = modFile->smallFileCompileIndex;
 		if (lightModIndex != 0xFFFF) {
 			id |= 0xFE000000 | (uint32_t(lightModIndex) << 12);
@@ -102,8 +123,9 @@ TESForm* GetFormFromMod(std::string modname, uint32_t formid) {
 	return TESForm::GetFormByID(id);
 }
 
-template<class Ty>
-Ty SafeWrite64Function(uintptr_t addr, Ty data) {
+template <class Ty>
+Ty SafeWrite64Function(uintptr_t addr, Ty data)
+{
 	DWORD oldProtect;
 	void* _d[2];
 	memcpy(_d, &data, sizeof(data));
@@ -118,49 +140,39 @@ Ty SafeWrite64Function(uintptr_t addr, Ty data) {
 	return olddata;
 }
 
-NiNode* CreateBone(const char* name) {
+NiNode* CreateBone(const char* name)
+{
 	NiNode* newbone = new NiNode(0);
 	newbone->name = name;
-	_MESSAGE("%s created.", name);
+	//_MESSAGE("%s created.", name);
 	return newbone;
 }
 
-NiNode* InsertBone(NiNode* node, const char* name) {
+NiNode* InsertBone(NiAVObject* root, NiNode* node, const char* name)
+{
 	NiNode* parent = node->parent;
-	NiNode* inserted = (NiNode*)node->GetObjectByName(name);
-	if (!inserted)
+	NiNode* inserted = (NiNode*)root->GetObjectByName(name);
+	if (!inserted) {
 		inserted = CreateBone(name);
-	if (parent) {
-		parent->DetachChild(node);
-		parent->AttachChild(inserted, true);
-		inserted = parent->GetObjectByName(name)->IsNode();
-		parentMap.insert(pair<NiNode*, string>(node, parent->name));
-	}
-	if (inserted) {
 		inserted->local.translate = NiPoint3();
 		inserted->local.rotate.MakeIdentity();
 		inserted->AttachChild(node, true);
-		if (node->parent == inserted) {
-			_MESSAGE("%s (%llx) inserted to %s (%llx).", name, inserted, node->name.c_str(), node);
-			return inserted;
+		//_MESSAGE("%s (%llx) created.", name, inserted);
+		if (parent) {
+			parent->DetachChild(node);
+			parent->AttachChild(inserted, true);
+			inserted->parent = parent;
+		} else {
+			parent = node;
 		}
+		//_MESSAGE("%s (%llx) inserted to %s (%llx).", name, inserted, parent->name.c_str(), parent);
+		return inserted;
 	}
 	return nullptr;
 }
 
-void CheckHierarchy(NiNode* original, NiNode* inserted) {
-	if (original->parent != inserted) {
-		_MESSAGE("Reparenting %s to %s", original->name.c_str(), inserted->name.c_str());
-		NiNode* parent = original->parent;
-		parent->DetachChild(original);
-		parent->AttachChild(inserted, true);
-		inserted->local.translate = NiPoint3();
-		inserted->local.rotate.MakeIdentity();
-		inserted->AttachChild(original, true);
-	}
-}
-
-bool Visit(NiAVObject* obj, const std::function<bool(NiAVObject*)>& functor) {
+bool Visit(NiAVObject* obj, const std::function<bool(NiAVObject*)>& functor)
+{
 	if (functor(obj))
 		return true;
 
@@ -178,47 +190,63 @@ bool Visit(NiAVObject* obj, const std::function<bool(NiAVObject*)>& functor) {
 	return false;
 }
 
-void ApplyBoneData(NiAVObject* node, TranslationData& data) {
-	NiNode* bone = (NiNode * )node->GetObjectByName(data.bonename);
+void SetScale(TESObjectREFR* ref, float scale)
+{
+	using func_t = decltype(&SetScale);
+	REL::Relocation<func_t> func{ REL::ID(817930) };
+	return func(ref, scale);
+}
+
+void ApplyBoneData(NiAVObject* node, TranslationData& data)
+{
+	NiNode* bone = (NiNode*)node->GetObjectByName(data.bonename);
 	if (bone) {
-		if (!data.ignoreXYZ) {
-			bone->local.translate = data.translation;
-		}
-		bone->local.scale = data.scale;
-		if (data.insertion) {
-			NiNode* boneorig = (NiNode*)node->GetObjectByName(data.bonenameorig);
-			if (boneorig) {
-				auto parentit = parentMap.find(boneorig);
-				if (parentit != parentMap.end()) {
-					NiNode* boneparent = (NiNode*)node->GetObjectByName(parentit->second);
-					CheckHierarchy(boneorig, bone);
-					if (boneparent) {
-						CheckHierarchy(bone, boneparent);
-					}
+		if (!data.insertion) {
+			if (!data.ignoreXYZ) {
+				bone->local.translate = data.translation;
+			}
+			bone->local.scale = data.scale;
+		} else {
+			if (!bone->GetObjectByName(data.bonenameorig)) {
+				_MESSAGE("%s structure mismatch. Reinserting...", data.bonename.c_str());
+				bone->parent->DetachChild(bone);
+				NiNode* boneorig = (NiNode*)node->GetObjectByName(data.bonenameorig);
+				if (boneorig) {
+					bone = InsertBone(node, boneorig, data.bonename.c_str());
 				}
+			} else {
+				if (!data.ignoreXYZ) {
+					bone->local.translate = data.translation;
+				}
+				bone->local.scale = data.scale;
 			}
 		}
-		//_MESSAGE("Bone %s x %f y %f z %f scale %f", data.bonename.c_str(), data.translation.x, data.translation.y, data.translation.z, data.scale);
-	}
-	else {
+		//_MESSAGE("Bone %s x %f y %f z %f scale %f", data.bonename.c_str(), bone->local.translate.x, bone->local.translate.y, bone->local.translate.z, bone->local.scale);
+	} else {
 		if (data.insertion) {
 			NiNode* boneorig = (NiNode*)node->GetObjectByName(data.bonenameorig);
 			if (boneorig) {
-				bone = InsertBone(boneorig, data.bonename.c_str());
+				bone = InsertBone(node, boneorig, data.bonename.c_str());
 			}
 		}
 	}
 }
 
-void DoSurgery(Actor* a) {
+void DoSurgery(Actor* a)
+{
+	if (!a) {
+		_MESSAGE("Function called on non-existent actor");
+		return;
+	}
 	int found = 0;
+	NiAVObject* node = a->Get3D();
+	if (!node || a->moreFlags & 0x20) {
+		_MESSAGE("Actor %llx - Couldn't find skeleton", a->formID);
+		return;
+	}
 	TESNPC* npc = a->GetNPC();
 	if (!npc) {
 		_MESSAGE("Actor %llx - Couldn't find NPC data", a->formID);
-		return;
-	}
-	if (a->moreFlags & 0x20) {
-		_MESSAGE("Actor %llx - Couldn't find skeleton", a->formID);
 		return;
 	}
 	//_MESSAGE("NPC %s (%llx, Actor %llx) Flag %04x moreFlag %04x", npc->GetFullName(), npc->formID, a->formID, a->flags, a->moreFlags);
@@ -228,8 +256,7 @@ void DoSurgery(Actor* a) {
 		if (raceit != customRaceMaleTranslations.end()) {
 			found = 1;
 		}
-	}
-	else {
+	} else {
 		raceit = customRaceFemaleTranslations.find(a->race);
 		if (raceit != customRaceFemaleTranslations.end()) {
 			found = 1;
@@ -240,148 +267,147 @@ void DoSurgery(Actor* a) {
 		found = 2;
 	}
 	if (found > 0) {
-		NiAVObject* node = a->Get3D();
-		if (node) {
-			if (found == 2) {
-				for (auto it = npcit->second.begin(); it != npcit->second.end(); ++it) {
-					if (a != p || !it->tponly || node == a->Get3D(false)) {
-						ApplyBoneData(node, *it);
-					}
+		if (found == 2) {
+			for (auto it = npcit->second.begin(); it != npcit->second.end(); ++it) {
+				if (a != p || !it->tponly || node == a->Get3D(false)) {
+					ApplyBoneData(node, *it);
+					//_MESSAGE("Actor %llx NPC %llx", a->formID, npc->formID);
 				}
 			}
-			else if (found == 1) {
-				//_MESSAGE("Actor %llx Race %llx", a, a->race);
-				for (auto it = raceit->second.begin(); it != raceit->second.end(); ++it) {
-					if (a != p || !it->tponly || node == a->Get3D(false)) {
-						ApplyBoneData(node, *it);
-					}
+		} else if (found == 1) {
+			for (auto it = raceit->second.begin(); it != raceit->second.end(); ++it) {
+				if (a != p || !it->tponly || node == a->Get3D(false)) {
+					ApplyBoneData(node, *it);
+					//_MESSAGE("Actor %llx Race %llx", a->formID, a->race->formID);
 				}
 			}
 		}
 	}
 }
 
-void RegisterBoneData(auto iter, TESForm* form, unordered_map<TESForm*, vector<TranslationData>>& map) {
+void RegisterBoneData(auto iter, TESForm* form, unordered_map<TESForm*, vector<TranslationData>>& map, unordered_map<uint32_t, float>& scaleMap)
+{
 	for (auto boneit = iter.value().begin(); boneit != iter.value().end(); ++boneit) {
-		float x = 0;
-		float y = 0;
-		float z = 0;
-		float scale = 1;
-		bool ignoreXYZ = false;
-		bool insertion = false;
-		bool tponly = false;
-		for (auto valit = boneit.value().begin(); valit != boneit.value().end(); ++valit) {
-			if (valit.key() == "X") {
-				x = valit.value().get<float>();
+		if (boneit.key() != "SetScale") {
+			float x = 0;
+			float y = 0;
+			float z = 0;
+			float scale = 1;
+			bool ignoreXYZ = false;
+			bool insertion = false;
+			bool tponly = false;
+			for (auto valit = boneit.value().begin(); valit != boneit.value().end(); ++valit) {
+				if (valit.key() == "X") {
+					x = valit.value().get<float>();
+				} else if (valit.key() == "Y") {
+					y = valit.value().get<float>();
+				} else if (valit.key() == "Z") {
+					z = valit.value().get<float>();
+				} else if (valit.key() == "Scale") {
+					scale = valit.value().get<float>();
+				} else if (valit.key() == "IgnoreXYZ") {
+					ignoreXYZ = valit.value().get<bool>();
+				} else if (valit.key() == "Insertion") {
+					insertion = valit.value().get<bool>();
+				} else if (valit.key() == "ThirdPersonOnly") {
+					tponly = valit.value().get<bool>();
+				}
 			}
-			else if (valit.key() == "Y") {
-				y = valit.value().get<float>();
+			string bonename = boneit.key();
+			if (insertion) {
+				bonename += "SurgeonInserted";
 			}
-			else if (valit.key() == "Z") {
-				z = valit.value().get<float>();
+			auto existit = map.find(form);
+			if (existit == map.end()) {
+				map.insert(pair<TESForm*, vector<TranslationData>>(form, vector<TranslationData>{
+																			 TranslationData(bonename, boneit.key(), NiPoint3(x, y, z), scale, ignoreXYZ, insertion, tponly) }));
+			} else {
+				existit->second.push_back(TranslationData(bonename, boneit.key(), NiPoint3(x, y, z), scale, ignoreXYZ, insertion, tponly));
 			}
-			else if (valit.key() == "Scale") {
-				scale = valit.value().get<float>();
-			}
-			else if (valit.key() == "IgnoreXYZ") {
-				ignoreXYZ = valit.value().get<bool>();
-			}
-			else if (valit.key() == "Insertion") {
-				insertion = valit.value().get<bool>();
-			}
-			else if (valit.key() == "ThirdPersonOnly") {
-				tponly = valit.value().get<bool>();
-			}
+			_MESSAGE("Registered Bone %s X %f Y %f Z %f Scale %f IgnoredXYZ %d Insertion %d ThirdPersonOnly %d", boneit.key().c_str(), x, y, z, scale, ignoreXYZ, insertion, tponly);
+		} else {
+			scaleMap.insert(pair<uint32_t, float>(form->formID, boneit.value().get<float>()));
+			_MESSAGE("SetScale %f", boneit.value().get<float>());
 		}
-		string bonename = boneit.key();
-		if (insertion) {
-			bonename += "SurgeonInserted";
-		}
-		auto existit = map.find(form);
-		if (existit == map.end()) {
-			map.insert(pair<TESForm*, vector<TranslationData>>(form, vector<TranslationData> {
-				TranslationData(bonename, boneit.key(), NiPoint3(x, y, z), scale, ignoreXYZ, insertion, tponly)
-			}));
-		}
-		else {
-			existit->second.push_back(TranslationData(bonename, boneit.key(), NiPoint3(x, y, z), scale, ignoreXYZ, insertion, tponly));
-		}
-		_MESSAGE("Registered Bone %s X %f Y %f Z %f Scale %f IgnoredXYZ %d Insertion %d ThirdPersonOnly %d", boneit.key().c_str(), x, y, z, scale, ignoreXYZ, insertion, tponly);
 	}
 }
 
-void DoGlobalSurgery() {
+void DoGlobalSurgery()
+{
 	BSTArray<ActorHandle>* highActorHandles = (BSTArray<ActorHandle>*)(ptr_processLists.address() + 0x40);
 	//_MESSAGE("Num highActorHandles %d.", highActorHandles->size());
 	if (highActorHandles->size() > 0) {
 		for (auto it = highActorHandles->begin(); it != highActorHandles->end(); ++it) {
 			Actor* a = it->get().get();
-			if(a && a->Get3D())
+			if (a && a->Get3D())
 				DoSurgery(a);
 		}
 	}
 }
 
-class CharacterMoveFinishEventWatcher {
-public:
-	typedef BSEventNotifyControl (CharacterMoveFinishEventWatcher::* FnProcessEvent)(bhkCharacterMoveFinishEvent& evn, BSTEventSource<bhkCharacterMoveFinishEvent>* dispatcher);
+void HookedUpdate(ProcessLists* list, float deltaTime, bool instant)
+{
+	DoGlobalSurgery();
+	DoSurgery(p);
 
-	BSEventNotifyControl HookedProcessEvent(bhkCharacterMoveFinishEvent& evn, BSTEventSource<bhkCharacterMoveFinishEvent>* src) {
-		Actor* a = (Actor*)((uintptr_t)this - 0x150);
-		DoSurgery(a);
-		FnProcessEvent fn = fnHash.at(*(uint64_t*)this);
-		return fn ? (this->*fn)(evn, src) : BSEventNotifyControl::kContinue;
-	}
+	typedef void (*FnUpdate)(ProcessLists*, float, bool);
+	FnUpdate fn = (FnUpdate)RunActorUpdatesOrig;
+	if (fn)
+		(*fn)(list, deltaTime, instant);
+}
 
-	static void HookSink(uint64_t vtable) {
-		auto it = fnHash.find(vtable);
-		if (it == fnHash.end()) {
-			FnProcessEvent fn = SafeWrite64Function(vtable + 0x8, &CharacterMoveFinishEventWatcher::HookedProcessEvent);
-			fnHash.insert(std::pair<uint64_t, FnProcessEvent>(vtable, fn));
-			//_MESSAGE("Hooked bhkCharacterMoveFinishEvent %llx", vtable);
-		}
-	}
-
-	static void UnHookSink(uint64_t vtable) {
-		auto it = fnHash.find(vtable);
-		if (it == fnHash.end())
-			return;
-		SafeWrite64Function(vtable + 0x8, it->second);
-		fnHash.erase(it);
-	}
-
-	F4_HEAP_REDEFINE_NEW(CharacterMoveFinishEventWatcher);
-protected:
-	static std::unordered_map<uint64_t, FnProcessEvent> fnHash;
-};
-std::unordered_map<uint64_t, CharacterMoveFinishEventWatcher::FnProcessEvent> CharacterMoveFinishEventWatcher::fnHash;
-
-struct TESObjectLoadedEvent {
-	uint32_t formId;			//00
-	uint8_t loaded;				//08
+struct TESObjectLoadedEvent
+{
+	uint32_t formId;  //00
+	uint8_t loaded;   //08
 };
 
-class ObjectLoadedEventSource : public BSTEventSource<TESObjectLoadedEvent> {
+class ObjectLoadedEventSource : public BSTEventSource<TESObjectLoadedEvent>
+{
 public:
-	[[nodiscard]] static ObjectLoadedEventSource* GetSingleton() {
+	[[nodiscard]] static ObjectLoadedEventSource* GetSingleton()
+	{
 		REL::Relocation<ObjectLoadedEventSource*> singleton{ REL::ID(416662) };
 		return singleton.get();
 	}
 };
 
-class ObjectLoadWatcher : public BSTEventSink<TESObjectLoadedEvent> {
+class ObjectLoadWatcher : public BSTEventSink<TESObjectLoadedEvent>
+{
 public:
-	virtual BSEventNotifyControl ProcessEvent(const TESObjectLoadedEvent& evn, BSTEventSource<TESObjectLoadedEvent>* a_source) {
-		TESForm* form = TESForm::GetFormByID(evn.formId);
-		if (form && form->formType == ENUM_FORM_ID::kACHR) {
-			Actor* a = static_cast<Actor*>(form);
-			if (a->Get3D() && !evn.loaded) {
-				Visit(a->Get3D(), [&](NiAVObject* obj) {
-					NiNode* node = obj->IsNode();
-					if(node)
-						parentMap.erase(node);
-					return false;
-				});
+	virtual BSEventNotifyControl ProcessEvent(const TESObjectLoadedEvent& evn, BSTEventSource<TESObjectLoadedEvent>* a_source)
+	{
+		if (evn.loaded) {
+			TESForm* form = TESForm::GetFormByID(evn.formId);
+			if (form && form->formType == ENUM_FORM_ID::kACHR) {
+				Actor* a = static_cast<Actor*>(form);
+				TESNPC* npc = a->GetNPC();
+				if (npc) {
+					float scale = -1.f;
+					if (a->race) {
+						if (npc->GetSex() == 0) {
+							auto raceit = customRaceMaleScales.find(a->race->formID);
+							if (raceit != customRaceMaleScales.end()) {
+								scale = raceit->second;
+								//_MESSAGE("NPC %s (%llx, Actor %llx) Male Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+							}
+						} else {
+							auto raceit = customRaceFemaleScales.find(a->race->formID);
+							if (raceit != customRaceFemaleScales.end()) {
+								scale = raceit->second;
+								//_MESSAGE("NPC %s (%llx, Actor %llx) Female Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+							}
+						}
+					}
+					auto npcit = customNPCScales.find(npc->formID);
+					if (npcit != customNPCScales.end()) {
+						scale = npcit->second;
+						//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+					}
+					if (scale >= 0.f) {
+						SetScale(a, scale);
+					}
+				}
 			}
 		}
 		return BSEventNotifyControl::kContinue;
@@ -389,34 +415,21 @@ public:
 	F4_HEAP_REDEFINE_NEW(ObjectLoadWatcher);
 };
 
-class CellAttachDetachWatcher : public BSTEventSink<CellAttachDetachEvent> {
-public:
-	virtual BSEventNotifyControl ProcessEvent(const CellAttachDetachEvent& evn, BSTEventSource<CellAttachDetachEvent>* a_source) {
-		if (evn.type == CellAttachDetachEvent::EVENT_TYPE::kPostAttach) {
-			//_MESSAGE("Cell Attached");
-			DoGlobalSurgery();
-		}
-		return BSEventNotifyControl::kContinue;
-	}
-	F4_HEAP_REDEFINE_NEW(CellAttachDetachWatcher);
-};
-
-void InitializePlugin() {
+void InitializePlugin()
+{
 	p = PlayerCharacter::GetSingleton();
-	uint64_t PCVtable = REL::Relocation<uint64_t>{PlayerCharacter::VTABLE[13]}.address();
-	uint64_t ActorVtable = REL::Relocation<uint64_t>{ Actor::VTABLE[13] }.address();
-	CharacterMoveFinishEventWatcher::HookSink(PCVtable);
-	CharacterMoveFinishEventWatcher::HookSink(ActorVtable);
 	ObjectLoadWatcher* olw = new ObjectLoadWatcher();
 	ObjectLoadedEventSource::GetSingleton()->RegisterSink(olw);
-	CellAttachDetachWatcher* cadw = new CellAttachDetachWatcher();
-	CellAttachDetachEventSource::CellAttachDetachEventSourceSingleton::GetSingleton().source.RegisterSink(cadw);
 }
 
-void LoadConfigs() {
+void LoadConfigs()
+{
 	customRaceFemaleTranslations.clear();
 	customRaceMaleTranslations.clear();
 	customNPCTranslations.clear();
+	customRaceFemaleScales.clear();
+	customRaceMaleScales.clear();
+	customNPCScales.clear();
 	ifstream reader;
 	reader.open("Data\\F4SE\\Plugins\\NanakoSurgeon.json");
 	nlohmann::json customData;
@@ -428,21 +441,18 @@ void LoadConfigs() {
 				if (form->GetFormType() == ENUM_FORM_ID::kNPC_) {
 					if (form->formID == 0x7) {
 						_MESSAGE("Player");
-					}
-					else {
+					} else {
 						_MESSAGE("NPC %s", ((TESNPC*)form)->GetFullName());
 					}
-					RegisterBoneData(formit, form, customNPCTranslations);
-				}
-				else if (form->GetFormType() == ENUM_FORM_ID::kRACE) {
+					RegisterBoneData(formit, form, customNPCTranslations, customNPCScales);
+				} else if (form->GetFormType() == ENUM_FORM_ID::kRACE) {
 					for (auto sexit = formit.value().begin(); sexit != formit.value().end(); ++sexit) {
 						if (sexit.key() == "Female") {
 							_MESSAGE("Race %s Female", form->GetFormEditorID());
-							RegisterBoneData(sexit, form, customRaceFemaleTranslations);
-						}
-						else if (sexit.key() == "Male") {
+							RegisterBoneData(sexit, form, customRaceFemaleTranslations, customRaceFemaleScales);
+						} else if (sexit.key() == "Male") {
 							_MESSAGE("Race %s Male", form->GetFormEditorID());
-							RegisterBoneData(sexit, form, customRaceMaleTranslations);
+							RegisterBoneData(sexit, form, customRaceMaleTranslations, customRaceMaleScales);
 						}
 					}
 				}
@@ -495,6 +505,8 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a
 		return false;
 	}
 
+	F4SE::AllocTrampoline(8 * 8);
+
 	return true;
 }
 
@@ -502,17 +514,18 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 {
 	F4SE::Init(a_f4se);
 
+	F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
+	RunActorUpdatesOrig = trampoline.write_call<5>(ptr_RunActorUpdates.address(), &HookedUpdate);
+
 	const F4SE::MessagingInterface* message = F4SE::GetMessagingInterface();
 	message->RegisterListener([](F4SE::MessagingInterface::Message* msg) -> void {
 		if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
 			InitializePlugin();
 			LoadConfigs();
-		}
-		else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
+		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
 			LoadConfigs();
 			DoGlobalSurgery();
-		}
-		else if (msg->type == F4SE::MessagingInterface::kNewGame) {
+		} else if (msg->type == F4SE::MessagingInterface::kNewGame) {
 			LoadConfigs();
 		}
 	});
