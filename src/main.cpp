@@ -56,6 +56,8 @@ unordered_map<uint32_t, float> customRaceFemaleScales;
 unordered_map<uint32_t, float> customRaceMaleScales;
 unordered_map<uint32_t, float> customNPCScales;
 
+unordered_map<uint32_t, float> actorScaleQueue;
+
 char tempbuf[1024] = { 0 };
 char* _MESSAGE(const char* fmt, ...)
 {
@@ -195,6 +197,13 @@ void SetScale(TESObjectREFR* ref, float scale)
 	using func_t = decltype(&SetScale);
 	REL::Relocation<func_t> func{ REL::ID(817930) };
 	return func(ref, scale);
+}
+
+float GetActorScale(Actor* a)
+{
+	typedef float (*_GetPlayerScale)(Actor*);
+	REL::Relocation<_GetPlayerScale> func{ REL::ID(911188) };
+	return func(a);
 }
 
 void ApplyBoneData(NiAVObject* node, TranslationData& data)
@@ -350,6 +359,17 @@ void HookedUpdate(ProcessLists* list, float deltaTime, bool instant)
 	DoGlobalSurgery();
 	DoSurgery(p);
 
+	for (auto scaleIt = actorScaleQueue.begin(); scaleIt != actorScaleQueue.end(); ++scaleIt) {
+		Actor* a = (Actor*)TESForm::GetFormByID(scaleIt->first);
+		if (a && a->Get3D()) {
+			if (GetActorScale(a) != scaleIt->second) {
+				SetScale(a, scaleIt->second);
+			}
+			actorScaleQueue.erase(scaleIt);
+			scaleIt = actorScaleQueue.begin();
+		}
+	}
+
 	typedef void (*FnUpdate)(ProcessLists*, float, bool);
 	FnUpdate fn = (FnUpdate)RunActorUpdatesOrig;
 	if (fn)
@@ -405,7 +425,7 @@ public:
 						//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
 					}
 					if (scale >= 0.f) {
-						SetScale(a, scale);
+						actorScaleQueue.insert(pair<uint32_t, float>(evn.formId, scale));
 					}
 				}
 			}
