@@ -49,14 +49,17 @@ REL::Relocation<ProcessLists*> ptr_processLists{ REL::ID(474742) };
 REL::Relocation<uintptr_t> ptr_RunActorUpdates{ REL::ID(556439), 0x17 };
 uintptr_t RunActorUpdatesOrig;
 PlayerCharacter* p;
-unordered_map<TESForm*, vector<TranslationData>> customRaceFemaleTranslations;
-unordered_map<TESForm*, vector<TranslationData>> customRaceMaleTranslations;
-unordered_map<TESForm*, vector<TranslationData>> customNPCTranslations;
+unordered_map<uint32_t, vector<TranslationData>> customRaceFemaleTranslations;
+unordered_map<uint32_t, vector<TranslationData>> customRaceMaleTranslations;
+unordered_map<uint32_t, vector<TranslationData>> customNPCTranslations;
 unordered_map<uint32_t, float> customRaceFemaleScales;
 unordered_map<uint32_t, float> customRaceMaleScales;
 unordered_map<uint32_t, float> customNPCScales;
 
 unordered_map<uint32_t, float> actorScaleQueue;
+const F4SE::TaskInterface* taskInterface;
+
+bool isLoading = false;
 
 char tempbuf[1024] = { 0 };
 char* _MESSAGE(const char* fmt, ...)
@@ -206,6 +209,15 @@ float GetActorScale(Actor* a)
 	return func(a);
 }
 
+TESNPC* GetBaseNPC(Actor* a)
+{
+	BSExtraData* extraLvlCreature = a->extraList->GetByType(EXTRA_DATA_TYPE::kLeveledCreature);
+	if (extraLvlCreature) {
+		return *(TESNPC**)((uintptr_t)extraLvlCreature + 0x18);
+	}
+	return a->GetNPC();
+}
+
 void ApplyBoneData(NiAVObject* node, TranslationData& data)
 {
 	NiNode* bone = (NiNode*)node->GetObjectByName(data.bonename);
@@ -259,19 +271,19 @@ void DoSurgery(Actor* a)
 		return;
 	}
 	//_MESSAGE("NPC %s (%llx, Actor %llx) Flag %04x moreFlag %04x", npc->GetFullName(), npc->formID, a->formID, a->flags, a->moreFlags);
-	unordered_map<TESForm*, vector<TranslationData>>::iterator raceit;
+	unordered_map<uint32_t, vector<TranslationData>>::iterator raceit;
 	if (npc->GetSex() == 0) {
-		raceit = customRaceMaleTranslations.find(a->race);
+		raceit = customRaceMaleTranslations.find(a->race->formID);
 		if (raceit != customRaceMaleTranslations.end()) {
 			found = 1;
 		}
 	} else {
-		raceit = customRaceFemaleTranslations.find(a->race);
+		raceit = customRaceFemaleTranslations.find(a->race->formID);
 		if (raceit != customRaceFemaleTranslations.end()) {
 			found = 1;
 		}
 	}
-	auto npcit = customNPCTranslations.find(npc);
+	auto npcit = customNPCTranslations.find(GetBaseNPC(a)->formID);
 	if (npcit != customNPCTranslations.end()) {
 		found = 2;
 	}
@@ -294,57 +306,9 @@ void DoSurgery(Actor* a)
 	}
 }
 
-void RegisterBoneData(auto iter, TESForm* form, unordered_map<TESForm*, vector<TranslationData>>& map, unordered_map<uint32_t, float>& scaleMap)
-{
-	for (auto boneit = iter.value().begin(); boneit != iter.value().end(); ++boneit) {
-		if (boneit.key() != "SetScale") {
-			float x = 0;
-			float y = 0;
-			float z = 0;
-			float scale = 1;
-			bool ignoreXYZ = false;
-			bool insertion = false;
-			bool tponly = false;
-			for (auto valit = boneit.value().begin(); valit != boneit.value().end(); ++valit) {
-				if (valit.key() == "X") {
-					x = valit.value().get<float>();
-				} else if (valit.key() == "Y") {
-					y = valit.value().get<float>();
-				} else if (valit.key() == "Z") {
-					z = valit.value().get<float>();
-				} else if (valit.key() == "Scale") {
-					scale = valit.value().get<float>();
-				} else if (valit.key() == "IgnoreXYZ") {
-					ignoreXYZ = valit.value().get<bool>();
-				} else if (valit.key() == "Insertion") {
-					insertion = valit.value().get<bool>();
-				} else if (valit.key() == "ThirdPersonOnly") {
-					tponly = valit.value().get<bool>();
-				}
-			}
-			string bonename = boneit.key();
-			if (insertion) {
-				bonename += "SurgeonInserted";
-			}
-			auto existit = map.find(form);
-			if (existit == map.end()) {
-				map.insert(pair<TESForm*, vector<TranslationData>>(form, vector<TranslationData>{
-																			 TranslationData(bonename, boneit.key(), NiPoint3(x, y, z), scale, ignoreXYZ, insertion, tponly) }));
-			} else {
-				existit->second.push_back(TranslationData(bonename, boneit.key(), NiPoint3(x, y, z), scale, ignoreXYZ, insertion, tponly));
-			}
-			_MESSAGE("Registered Bone %s X %f Y %f Z %f Scale %f IgnoredXYZ %d Insertion %d ThirdPersonOnly %d", boneit.key().c_str(), x, y, z, scale, ignoreXYZ, insertion, tponly);
-		} else {
-			scaleMap.insert(pair<uint32_t, float>(form->formID, boneit.value().get<float>()));
-			_MESSAGE("SetScale %f", boneit.value().get<float>());
-		}
-	}
-}
-
 void DoGlobalSurgery()
 {
 	BSTArray<ActorHandle>* highActorHandles = (BSTArray<ActorHandle>*)(ptr_processLists.address() + 0x40);
-	//_MESSAGE("Num highActorHandles %d.", highActorHandles->size());
 	if (highActorHandles->size() > 0) {
 		for (auto it = highActorHandles->begin(); it != highActorHandles->end(); ++it) {
 			Actor* a = it->get().get();
@@ -354,20 +318,77 @@ void DoGlobalSurgery()
 	}
 }
 
-void HookedUpdate(ProcessLists* list, float deltaTime, bool instant)
+void DoScaling()
 {
-	DoGlobalSurgery();
-	DoSurgery(p);
-
-	for (auto scaleIt = actorScaleQueue.begin(); scaleIt != actorScaleQueue.end(); ++scaleIt) {
+	unordered_map<uint32_t, float> tempScaleQueue = actorScaleQueue;
+	for (auto scaleIt = tempScaleQueue.begin(); scaleIt != tempScaleQueue.end(); ++scaleIt) {
 		Actor* a = (Actor*)TESForm::GetFormByID(scaleIt->first);
 		if (a && a->Get3D()) {
 			if (GetActorScale(a) != scaleIt->second) {
-				SetScale(a, scaleIt->second);
+				//_MESSAGE("Actor %llx (%llx) Base %llx (%llx) Scale %f", a->formID, a, GetBaseNPC(a)->formID, GetBaseNPC(a), scaleIt->second);
+				TESNPC* npc = a->GetNPC();
+				if (npc) {
+					//_MESSAGE("Name %s", npc->GetFullName());
+					SetScale(a, scaleIt->second);
+				}
 			}
-			actorScaleQueue.erase(scaleIt);
-			scaleIt = actorScaleQueue.begin();
+			actorScaleQueue.erase(scaleIt->first);
 		}
+	}
+}
+
+void QueueScaling(Actor* a)
+{
+	TESNPC* npc = a->GetNPC();
+	if (npc) {
+		float scale = -1.f;
+		if (a->race) {
+			if (npc->GetSex() == 0) {
+				auto raceit = customRaceMaleScales.find(a->race->formID);
+				if (raceit != customRaceMaleScales.end()) {
+					scale = raceit->second;
+					//_MESSAGE("NPC %s (%llx, Actor %llx) Male Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+				}
+			} else {
+				auto raceit = customRaceFemaleScales.find(a->race->formID);
+				if (raceit != customRaceFemaleScales.end()) {
+					scale = raceit->second;
+					//_MESSAGE("NPC %s (%llx, Actor %llx) Female Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+				}
+			}
+		}
+		auto npcit = customNPCScales.find(GetBaseNPC(a)->formID);
+		if (npcit != customNPCScales.end()) {
+			scale = npcit->second;
+			//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+		}
+		if (scale >= 0.f && actorScaleQueue.find(a->formID) == actorScaleQueue.end()) {
+			actorScaleQueue.insert(pair<uint32_t, float>(a->formID, scale));
+		}
+	}
+}
+
+void DoGlobalScaling()
+{
+	BSTArray<ActorHandle>* highActorHandles = (BSTArray<ActorHandle>*)(ptr_processLists.address() + 0x40);
+	if (highActorHandles->size() > 0) {
+		for (auto it = highActorHandles->begin(); it != highActorHandles->end(); ++it) {
+			Actor* a = it->get().get();
+			if (a && a->Get3D() && actorScaleQueue.find(a->formID) == actorScaleQueue.end()) {
+				QueueScaling(a);
+			}
+		}
+	}
+}
+
+void HookedUpdate(ProcessLists* list, float deltaTime, bool instant)
+{
+	if (!isLoading) {
+		if (actorScaleQueue.size() > 0) {
+			DoScaling();
+		}
+		DoGlobalSurgery();
+		DoSurgery(p);
 	}
 
 	typedef void (*FnUpdate)(ProcessLists*, float, bool);
@@ -401,33 +422,7 @@ public:
 			TESForm* form = TESForm::GetFormByID(evn.formId);
 			if (form && form->formType == ENUM_FORM_ID::kACHR) {
 				Actor* a = static_cast<Actor*>(form);
-				TESNPC* npc = a->GetNPC();
-				if (npc) {
-					float scale = -1.f;
-					if (a->race) {
-						if (npc->GetSex() == 0) {
-							auto raceit = customRaceMaleScales.find(a->race->formID);
-							if (raceit != customRaceMaleScales.end()) {
-								scale = raceit->second;
-								//_MESSAGE("NPC %s (%llx, Actor %llx) Male Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
-							}
-						} else {
-							auto raceit = customRaceFemaleScales.find(a->race->formID);
-							if (raceit != customRaceFemaleScales.end()) {
-								scale = raceit->second;
-								//_MESSAGE("NPC %s (%llx, Actor %llx) Female Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
-							}
-						}
-					}
-					auto npcit = customNPCScales.find(npc->formID);
-					if (npcit != customNPCScales.end()) {
-						scale = npcit->second;
-						//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
-					}
-					if (scale >= 0.f) {
-						actorScaleQueue.insert(pair<uint32_t, float>(evn.formId, scale));
-					}
-				}
+				QueueScaling(a);
 			}
 		}
 		return BSEventNotifyControl::kContinue;
@@ -435,23 +430,79 @@ public:
 	F4_HEAP_REDEFINE_NEW(ObjectLoadWatcher);
 };
 
-void InitializePlugin()
+class MenuWatcher : public BSTEventSink<MenuOpenCloseEvent>
 {
-	p = PlayerCharacter::GetSingleton();
-	ObjectLoadWatcher* olw = new ObjectLoadWatcher();
-	ObjectLoadedEventSource::GetSingleton()->RegisterSink(olw);
+public:
+	virtual BSEventNotifyControl ProcessEvent(const MenuOpenCloseEvent& evn, BSTEventSource<MenuOpenCloseEvent>* src) override
+	{
+		if (evn.menuName == BSFixedString("LoadingMenu")) {
+			if (evn.opening) {
+				isLoading = true;
+			} else {
+				isLoading = false;
+			}
+		}
+		return BSEventNotifyControl::kContinue;
+	}
+	F4_HEAP_REDEFINE_NEW(MenuWatcher);
+};
+
+void RegisterBoneData(auto iter, TESForm* form, unordered_map<uint32_t, vector<TranslationData>>& map, unordered_map<uint32_t, float>& scaleMap)
+{
+	auto conflictit = map.find(form->formID);
+	if (conflictit != map.end()) {
+		map.erase(conflictit);
+	}
+
+	for (auto boneit = iter.value().begin(); boneit != iter.value().end(); ++boneit) {
+		if (boneit.key() != "SetScale") {
+			float x = 0;
+			float y = 0;
+			float z = 0;
+			float scale = 1;
+			bool ignoreXYZ = false;
+			bool insertion = false;
+			bool tponly = false;
+			for (auto valit = boneit.value().begin(); valit != boneit.value().end(); ++valit) {
+				if (valit.key() == "X") {
+					x = valit.value().get<float>();
+				} else if (valit.key() == "Y") {
+					y = valit.value().get<float>();
+				} else if (valit.key() == "Z") {
+					z = valit.value().get<float>();
+				} else if (valit.key() == "Scale") {
+					scale = valit.value().get<float>();
+				} else if (valit.key() == "IgnoreXYZ") {
+					ignoreXYZ = valit.value().get<bool>();
+				} else if (valit.key() == "Insertion") {
+					insertion = valit.value().get<bool>();
+				} else if (valit.key() == "ThirdPersonOnly") {
+					tponly = valit.value().get<bool>();
+				}
+			}
+			string bonename = boneit.key();
+			if (insertion) {
+				bonename += "SurgeonInserted";
+			}
+			auto existit = map.find(form->formID);
+			if (existit == map.end()) {
+				map.insert(pair<uint32_t, vector<TranslationData>>(form->formID, vector<TranslationData>{
+																					 TranslationData(bonename, boneit.key(), NiPoint3(x, y, z), scale, ignoreXYZ, insertion, tponly) }));
+			} else {
+				existit->second.push_back(TranslationData(bonename, boneit.key(), NiPoint3(x, y, z), scale, ignoreXYZ, insertion, tponly));
+			}
+			_MESSAGE("Registered Bone %s X %f Y %f Z %f Scale %f IgnoredXYZ %d Insertion %d ThirdPersonOnly %d", boneit.key().c_str(), x, y, z, scale, ignoreXYZ, insertion, tponly);
+		} else {
+			scaleMap.insert(pair<uint32_t, float>(form->formID, boneit.value().get<float>()));
+			_MESSAGE("SetScale %f", boneit.value().get<float>());
+		}
+	}
 }
 
-void LoadConfigs()
+void ParseJSON(const std::filesystem::path path)
 {
-	customRaceFemaleTranslations.clear();
-	customRaceMaleTranslations.clear();
-	customNPCTranslations.clear();
-	customRaceFemaleScales.clear();
-	customRaceMaleScales.clear();
-	customNPCScales.clear();
 	ifstream reader;
-	reader.open("Data\\F4SE\\Plugins\\NanakoSurgeon.json");
+	reader.open(path);
 	nlohmann::json customData;
 	reader >> customData;
 	for (auto pluginit = customData.begin(); pluginit != customData.end(); ++pluginit) {
@@ -480,6 +531,42 @@ void LoadConfigs()
 		}
 	}
 	reader.close();
+}
+
+void LoadConfigs()
+{
+	customRaceFemaleTranslations.clear();
+	customRaceMaleTranslations.clear();
+	customNPCTranslations.clear();
+	customRaceFemaleScales.clear();
+	customRaceMaleScales.clear();
+	customNPCScales.clear();
+	namespace fs = std::filesystem;
+	fs::path jsonPath = fs::current_path();
+	jsonPath += "\\Data\\F4SE\\Plugins\\NanakoSurgeon";
+	std::stringstream stream;
+	fs::directory_entry jsonEntry{ jsonPath };
+	if (jsonEntry.exists()) {
+		for (auto& it : fs::directory_iterator(jsonEntry)) {
+			if (it.path().extension().compare(".json") == 0) {
+				stream << it.path().filename();
+				_MESSAGE("Loading bone data %s", stream.str().c_str());
+				stream.str(std::string());
+				ParseJSON(it.path());
+			}
+		}
+	}
+	ParseJSON("Data\\F4SE\\Plugins\\NanakoSurgeon.json");
+}
+
+void InitializePlugin()
+{
+	p = PlayerCharacter::GetSingleton();
+	ObjectLoadWatcher* olw = new ObjectLoadWatcher();
+	ObjectLoadedEventSource::GetSingleton()->RegisterSink(olw);
+
+	MenuWatcher* mw = new MenuWatcher();
+	UI::GetSingleton()->GetEventSource<MenuOpenCloseEvent>()->RegisterSink(mw);
 }
 
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4SE::PluginInfo* a_info)
@@ -537,6 +624,8 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
 	RunActorUpdatesOrig = trampoline.write_call<5>(ptr_RunActorUpdates.address(), &HookedUpdate);
 
+	taskInterface = F4SE::GetTaskInterface();
+
 	const F4SE::MessagingInterface* message = F4SE::GetMessagingInterface();
 	message->RegisterListener([](F4SE::MessagingInterface::Message* msg) -> void {
 		if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
@@ -545,6 +634,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
 			LoadConfigs();
 			DoGlobalSurgery();
+			DoGlobalScaling();
 		} else if (msg->type == F4SE::MessagingInterface::kNewGame) {
 			LoadConfigs();
 		}
