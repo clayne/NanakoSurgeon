@@ -8,8 +8,6 @@ using std::string;
 using std::unordered_map;
 using std::vector;
 
-class ProcessLists;
-
 struct TranslationData
 {
 	string bonename;
@@ -56,6 +54,7 @@ unordered_map<uint32_t, float> customRaceFemaleScales;
 unordered_map<uint32_t, float> customRaceMaleScales;
 unordered_map<uint32_t, float> customNPCScales;
 
+BSSpinLock* scaleQueueLock;
 unordered_map<uint32_t, float> actorScaleQueue;
 const F4SE::TaskInterface* taskInterface;
 
@@ -332,7 +331,9 @@ void DoScaling()
 					SetScale(a, scaleIt->second);
 				}
 			}
+			scaleQueueLock->lock();
 			actorScaleQueue.erase(scaleIt->first);
+			scaleQueueLock->unlock();
 		}
 	}
 }
@@ -363,7 +364,9 @@ void QueueScaling(Actor* a)
 			//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
 		}
 		if (scale >= 0.f && actorScaleQueue.find(a->formID) == actorScaleQueue.end()) {
+			scaleQueueLock->lock();
 			actorScaleQueue.insert(pair<uint32_t, float>(a->formID, scale));
+			scaleQueueLock->unlock();
 		}
 	}
 }
@@ -396,22 +399,6 @@ void HookedUpdate(ProcessLists* list, float deltaTime, bool instant)
 	if (fn)
 		(*fn)(list, deltaTime, instant);
 }
-
-struct TESObjectLoadedEvent
-{
-	uint32_t formId;  //00
-	uint8_t loaded;   //08
-};
-
-class ObjectLoadedEventSource : public BSTEventSource<TESObjectLoadedEvent>
-{
-public:
-	[[nodiscard]] static ObjectLoadedEventSource* GetSingleton()
-	{
-		REL::Relocation<ObjectLoadedEventSource*> singleton{ REL::ID(416662) };
-		return singleton.get();
-	}
-};
 
 class ObjectLoadWatcher : public BSTEventSink<TESObjectLoadedEvent>
 {
@@ -564,6 +551,7 @@ void InitializePlugin()
 	p = PlayerCharacter::GetSingleton();
 	ObjectLoadWatcher* olw = new ObjectLoadWatcher();
 	ObjectLoadedEventSource::GetSingleton()->RegisterSink(olw);
+	scaleQueueLock = new BSSpinLock();
 
 	MenuWatcher* mw = new MenuWatcher();
 	UI::GetSingleton()->GetEventSource<MenuOpenCloseEvent>()->RegisterSink(mw);
@@ -602,7 +590,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a
 	a_info->version = Version::MAJOR;
 
 	if (a_f4se->IsEditor()) {
-		logger::critical("loaded in editor"sv);
+		logger::critical(FMT_STRING("loaded in editor"));
 		return false;
 	}
 
