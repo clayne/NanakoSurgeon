@@ -129,6 +129,7 @@ target_link_libraries(
 		CommonLibF4::CommonLibF4
 		spdlog::spdlog
 		nlohmann_json::nlohmann_json
+		${CMAKE_CURRENT_SOURCE_DIR}/src/lib/detours.lib
 )
 
 target_precompile_headers(

@@ -1,9 +1,12 @@
+#include "include/detours.h"
 #include "nlohmann/json.hpp"
 #include <fstream>
+#include <shared_mutex>
 #include <wtypes.h>
 using namespace RE;
 using std::ifstream;
 using std::pair;
+using std::queue;
 using std::string;
 using std::unordered_map;
 using std::vector;
@@ -45,7 +48,11 @@ namespace RE
 REL::Relocation<uint64_t*> ptr_engineTime{ REL::ID(1280610) };
 REL::Relocation<ProcessLists*> ptr_processLists{ REL::ID(474742) };
 REL::Relocation<uintptr_t> ptr_RunActorUpdates{ REL::ID(556439), 0x17 };
+REL::Relocation<uintptr_t> ptr_ScaleSkinBones{ REL::ID(574183) };
 uintptr_t RunActorUpdatesOrig;
+uintptr_t PCLoad3DOrig;
+uintptr_t ActorLoad3DOrig;
+uintptr_t ScaleSkinBonesOrig;
 PlayerCharacter* p;
 unordered_map<uint32_t, vector<TranslationData>> customRaceFemaleTranslations;
 unordered_map<uint32_t, vector<TranslationData>> customRaceMaleTranslations;
@@ -54,8 +61,17 @@ unordered_map<uint32_t, float> customRaceFemaleScales;
 unordered_map<uint32_t, float> customRaceMaleScales;
 unordered_map<uint32_t, float> customNPCScales;
 
-BSSpinLock* scaleQueueLock;
+using SharedLock = std::shared_mutex;
+using ReadLocker = std::shared_lock<SharedLock>;
+using WriteLocker = std::unique_lock<SharedLock>;
 unordered_map<uint32_t, float> actorScaleQueue;
+SharedLock scaleQueueLock;
+ReadLocker scaleReadLock;
+WriteLocker scaleWriteLock;
+queue<uint32_t> actorSurgeryQueue;
+SharedLock surgeryQueueLock;
+WriteLocker surgeryWriteLock;
+
 const F4SE::TaskInterface* taskInterface;
 
 bool isLoading = false;
@@ -252,57 +268,79 @@ void ApplyBoneData(NiAVObject* node, TranslationData& data)
 	}
 }
 
-void DoSurgery(Actor* a)
+void DoSurgery()
 {
-	if (!a) {
-		_MESSAGE("Function called on non-existent actor");
-		return;
-	}
-	int found = 0;
-	NiAVObject* node = a->Get3D();
-	if (!node || a->moreFlags & 0x20) {
-		_MESSAGE("Actor %llx - Couldn't find skeleton", a->formID);
-		return;
-	}
-	TESNPC* npc = a->GetNPC();
-	if (!npc) {
-		_MESSAGE("Actor %llx - Couldn't find NPC data", a->formID);
-		return;
-	}
-	//_MESSAGE("NPC %s (%llx, Actor %llx) Flag %04x moreFlag %04x", npc->GetFullName(), npc->formID, a->formID, a->flags, a->moreFlags);
-	unordered_map<uint32_t, vector<TranslationData>>::iterator raceit;
-	if (npc->GetSex() == 0) {
-		raceit = customRaceMaleTranslations.find(a->race->formID);
-		if (raceit != customRaceMaleTranslations.end()) {
-			found = 1;
+	surgeryWriteLock.lock();
+	while (!actorSurgeryQueue.empty()) {
+		uint32_t formID = actorSurgeryQueue.front();
+		actorSurgeryQueue.pop();
+		auto form = TESForm::GetFormByID(formID);
+		_MESSAGE("Surgery FormID %llx", formID);
+		if (!form) {
+			_MESSAGE("FormID %llx wasn't loaded", formID);
+			continue;
 		}
-	} else {
-		raceit = customRaceFemaleTranslations.find(a->race->formID);
-		if (raceit != customRaceFemaleTranslations.end()) {
-			found = 1;
+
+		auto actor = form->As<Actor>();
+		if (!actor) {
+			_MESSAGE("FormID %llx is not an actor", formID);
+			continue;
 		}
-	}
-	auto npcit = customNPCTranslations.find(GetBaseNPC(a)->formID);
-	if (npcit != customNPCTranslations.end()) {
-		found = 2;
-	}
-	if (found > 0) {
-		if (found == 2) {
-			for (auto it = npcit->second.begin(); it != npcit->second.end(); ++it) {
-				if (a != p || !it->tponly || node == a->Get3D(false)) {
-					ApplyBoneData(node, *it);
-					//_MESSAGE("Actor %llx NPC %llx", a->formID, npc->formID);
-				}
+
+		int found = 0;
+		NiAVObject* node = actor->Get3D();
+		if (!node) {
+			_MESSAGE("Actor %llx - Couldn't find skeleton", actor->formID);
+			continue;
+		}
+		TESNPC* npc = actor->GetNPC();
+		if (!npc) {
+			_MESSAGE("Actor %llx - Couldn't find NPC data", actor->formID);
+			continue;
+		}
+		//_MESSAGE("NPC %s (%llx, Actor %llx) Flag %04x moreFlag %04x", npc->GetFullName(), npc->formID, a->formID, a->flags, a->moreFlags);
+		unordered_map<uint32_t, vector<TranslationData>>::iterator raceit;
+		if (npc->GetSex() == 0) {
+			raceit = customRaceMaleTranslations.find(actor->race->formID);
+			if (raceit != customRaceMaleTranslations.end()) {
+				found = 1;
 			}
-		} else if (found == 1) {
-			for (auto it = raceit->second.begin(); it != raceit->second.end(); ++it) {
-				if (a != p || !it->tponly || node == a->Get3D(false)) {
-					ApplyBoneData(node, *it);
-					//_MESSAGE("Actor %llx Race %llx", a->formID, a->race->formID);
-				}
+		} else {
+			raceit = customRaceFemaleTranslations.find(actor->race->formID);
+			if (raceit != customRaceFemaleTranslations.end()) {
+				found = 1;
 			}
 		}
+		auto npcit = customNPCTranslations.find(GetBaseNPC(actor)->formID);
+		if (npcit != customNPCTranslations.end()) {
+			found = 2;
+		}
+		if (found > 0) {
+			if (found == 2) {
+				for (auto it = npcit->second.begin(); it != npcit->second.end(); ++it) {
+					if (actor != p || !it->tponly || node == actor->Get3D(false)) {
+						ApplyBoneData(node, *it);
+						//_MESSAGE("Actor %llx NPC %llx", a->formID, npc->formID);
+					}
+				}
+			} else if (found == 1) {
+				for (auto it = raceit->second.begin(); it != raceit->second.end(); ++it) {
+					if (actor != p || !it->tponly || node == actor->Get3D(false)) {
+						ApplyBoneData(node, *it);
+						//_MESSAGE("Actor %llx Race %llx", a->formID, a->race->formID);
+					}
+				}
+			}
+		}
 	}
+	surgeryWriteLock.unlock();
+}
+
+void QueueSurgery(Actor* a)
+{
+	surgeryWriteLock.lock();
+	actorSurgeryQueue.push(a->formID);
+	surgeryWriteLock.unlock();
 }
 
 void DoGlobalSurgery()
@@ -312,28 +350,45 @@ void DoGlobalSurgery()
 		for (auto it = highActorHandles->begin(); it != highActorHandles->end(); ++it) {
 			Actor* a = it->get().get();
 			if (a && a->Get3D())
-				DoSurgery(a);
+				QueueSurgery(a);
 		}
 	}
 }
 
+void RemoveFromScaleQueue(const uint32_t formID)
+{
+	scaleWriteLock.lock();
+	actorScaleQueue.erase(formID);
+	scaleWriteLock.unlock();
+}
+
 void DoScaling()
 {
+	scaleReadLock.lock();
 	unordered_map<uint32_t, float> tempScaleQueue = actorScaleQueue;
-	for (auto scaleIt = tempScaleQueue.begin(); scaleIt != tempScaleQueue.end(); ++scaleIt) {
-		Actor* a = (Actor*)TESForm::GetFormByID(scaleIt->first);
-		if (a && a->Get3D()) {
-			if (GetActorScale(a) != scaleIt->second) {
-				//_MESSAGE("Actor %llx (%llx) Base %llx (%llx) Scale %f", a->formID, a, GetBaseNPC(a)->formID, GetBaseNPC(a), scaleIt->second);
-				TESNPC* npc = a->GetNPC();
-				if (npc) {
-					//_MESSAGE("Name %s", npc->GetFullName());
-					SetScale(a, scaleIt->second);
-				}
+	scaleReadLock.unlock();
+	for (auto& [formID, scale] : tempScaleQueue) {
+		auto form = TESForm::GetFormByID(formID);
+		_MESSAGE("Scaling FormID %llx", formID);
+		if (!form) {
+			_MESSAGE("FormID %llx wasn't loaded", formID);
+			RemoveFromScaleQueue(formID);
+			continue;
+		}
+
+		auto actor = form->As<Actor>();
+
+		if (!actor) {
+			_MESSAGE("FormID %llx is not an actor", formID);
+			RemoveFromScaleQueue(formID);
+			continue;
+		}
+
+		if (actor->Get3D()) {
+			if (GetActorScale(actor) != scale) {
+				SetScale(actor, scale);
 			}
-			scaleQueueLock->lock();
-			actorScaleQueue.erase(scaleIt->first);
-			scaleQueueLock->unlock();
+			RemoveFromScaleQueue(formID);
 		}
 	}
 }
@@ -363,11 +418,11 @@ void QueueScaling(Actor* a)
 			scale = npcit->second;
 			//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
 		}
+		scaleWriteLock.lock();
 		if (scale >= 0.f && actorScaleQueue.find(a->formID) == actorScaleQueue.end()) {
-			scaleQueueLock->lock();
 			actorScaleQueue.insert(pair<uint32_t, float>(a->formID, scale));
-			scaleQueueLock->unlock();
 		}
+		scaleWriteLock.unlock();
 	}
 }
 
@@ -390,8 +445,9 @@ void HookedUpdate(ProcessLists* list, float deltaTime, bool instant)
 		if (actorScaleQueue.size() > 0) {
 			DoScaling();
 		}
-		DoGlobalSurgery();
-		DoSurgery(p);
+		if (!actorSurgeryQueue.empty()) {
+			DoSurgery();
+		}
 	}
 
 	typedef void (*FnUpdate)(ProcessLists*, float, bool);
@@ -400,22 +456,43 @@ void HookedUpdate(ProcessLists* list, float deltaTime, bool instant)
 		(*fn)(list, deltaTime, instant);
 }
 
-class ObjectLoadWatcher : public BSTEventSink<TESObjectLoadedEvent>
+void HookedScaleSkinBones(Actor* a, NiAVObject* bone, void* boneScaleMap)
 {
-public:
-	virtual BSEventNotifyControl ProcessEvent(const TESObjectLoadedEvent& evn, BSTEventSource<TESObjectLoadedEvent>* a_source)
-	{
-		if (evn.loaded) {
-			TESForm* form = TESForm::GetFormByID(evn.formId);
-			if (form && form->formType == ENUM_FORM_ID::kACHR) {
-				Actor* a = static_cast<Actor*>(form);
-				QueueScaling(a);
-			}
-		}
-		return BSEventNotifyControl::kContinue;
+	typedef void (*FnScaleSkinBones)(Actor*, NiAVObject*, void*);
+	FnScaleSkinBones fn = (FnScaleSkinBones)ScaleSkinBonesOrig;
+	if (fn)
+		(*fn)(a, bone, boneScaleMap);
+	_MESSAGE("HookedScaleSkinBones %llx", a->formID);
+	if (a->formType == ENUM_FORM_ID::kACHR && a->Get3D()) {
+		QueueSurgery(a);
 	}
-	F4_HEAP_REDEFINE_NEW(ObjectLoadWatcher);
-};
+}
+
+NiAVObject* HookedActorLoad3D(Actor* a, bool b)
+{
+	NiAVObject* ret = nullptr;
+	typedef NiAVObject* (*FnLoad3D)(Actor*, bool);
+	FnLoad3D fn = (FnLoad3D)ActorLoad3DOrig;
+	if (fn)
+		ret = (*fn)(a, b);
+
+	_MESSAGE("HookedActorLoad3D %llx", a->formID);
+	QueueScaling(a);
+	return ret;
+}
+
+NiAVObject* HookedPCLoad3D(Actor* a, bool b)
+{
+	NiAVObject* ret = nullptr;
+	typedef NiAVObject* (*FnLoad3D)(Actor*, bool);
+	FnLoad3D fn = (FnLoad3D)PCLoad3DOrig;
+	if (fn)
+		ret = (*fn)(a, b);
+
+	_MESSAGE("HookedPCLoad3D %llx", a->formID);
+	QueueScaling(a);
+	return ret;
+}
 
 class MenuWatcher : public BSTEventSink<MenuOpenCloseEvent>
 {
@@ -549,12 +626,22 @@ void LoadConfigs()
 void InitializePlugin()
 {
 	p = PlayerCharacter::GetSingleton();
-	ObjectLoadWatcher* olw = new ObjectLoadWatcher();
-	ObjectLoadedEventSource::GetSingleton()->RegisterSink(olw);
-	scaleQueueLock = new BSSpinLock();
+
+	REL::Relocation<uintptr_t> ActorVtbl{ RE::VTABLE::Actor[0] };
+	ActorLoad3DOrig = ActorVtbl.write_vfunc(0x86, HookedActorLoad3D);
+	REL::Relocation<uintptr_t> PCVtbl{ RE::VTABLE::PlayerCharacter[0] };
+	PCLoad3DOrig = PCVtbl.write_vfunc(0x86, HookedPCLoad3D);
 
 	MenuWatcher* mw = new MenuWatcher();
 	UI::GetSingleton()->GetEventSource<MenuOpenCloseEvent>()->RegisterSink(mw);
+
+	scaleReadLock = ReadLocker(scaleQueueLock);
+	scaleReadLock.unlock();
+	scaleWriteLock = WriteLocker(scaleQueueLock);
+	scaleWriteLock.unlock();
+
+	surgeryWriteLock = WriteLocker(surgeryQueueLock);
+	surgeryWriteLock.unlock();
 }
 
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4SE::PluginInfo* a_info)
@@ -612,6 +699,12 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
 	RunActorUpdatesOrig = trampoline.write_call<5>(ptr_RunActorUpdates.address(), &HookedUpdate);
 
+	ScaleSkinBonesOrig = ptr_ScaleSkinBones.address();
+	DetourTransactionBegin();
+	DetourUpdateThread(GetCurrentThread());
+	DetourAttach(&(PVOID&)ScaleSkinBonesOrig, HookedScaleSkinBones);
+	DetourTransactionCommit();
+
 	taskInterface = F4SE::GetTaskInterface();
 
 	const F4SE::MessagingInterface* message = F4SE::GetMessagingInterface();
@@ -622,7 +715,6 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 		} else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
 			LoadConfigs();
 			DoGlobalSurgery();
-			DoGlobalScaling();
 		} else if (msg->type == F4SE::MessagingInterface::kNewGame) {
 			LoadConfigs();
 		}
