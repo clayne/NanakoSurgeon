@@ -275,7 +275,7 @@ void DoSurgery()
 		uint32_t formID = actorSurgeryQueue.front();
 		actorSurgeryQueue.pop();
 		auto form = TESForm::GetFormByID(formID);
-		_MESSAGE("Surgery FormID %llx", formID);
+		//_MESSAGE("Surgery FormID %llx", formID);
 		if (!form) {
 			_MESSAGE("FormID %llx wasn't loaded", formID);
 			continue;
@@ -369,7 +369,7 @@ void DoScaling()
 	scaleReadLock.unlock();
 	for (auto& [formID, scale] : tempScaleQueue) {
 		auto form = TESForm::GetFormByID(formID);
-		_MESSAGE("Scaling FormID %llx", formID);
+		//_MESSAGE("Scaling FormID %llx", formID);
 		if (!form) {
 			_MESSAGE("FormID %llx wasn't loaded", formID);
 			RemoveFromScaleQueue(formID);
@@ -462,7 +462,7 @@ void HookedScaleSkinBones(Actor* a, NiAVObject* bone, void* boneScaleMap)
 	FnScaleSkinBones fn = (FnScaleSkinBones)ScaleSkinBonesOrig;
 	if (fn)
 		(*fn)(a, bone, boneScaleMap);
-	_MESSAGE("HookedScaleSkinBones %llx", a->formID);
+	//_MESSAGE("HookedScaleSkinBones %llx", a->formID);
 	if (a->formType == ENUM_FORM_ID::kACHR && a->Get3D()) {
 		QueueSurgery(a);
 	}
@@ -476,7 +476,7 @@ NiAVObject* HookedActorLoad3D(Actor* a, bool b)
 	if (fn)
 		ret = (*fn)(a, b);
 
-	_MESSAGE("HookedActorLoad3D %llx", a->formID);
+	//_MESSAGE("HookedActorLoad3D %llx", a->formID);
 	QueueScaling(a);
 	return ret;
 }
@@ -489,7 +489,7 @@ NiAVObject* HookedPCLoad3D(Actor* a, bool b)
 	if (fn)
 		ret = (*fn)(a, b);
 
-	_MESSAGE("HookedPCLoad3D %llx", a->formID);
+	//_MESSAGE("HookedPCLoad3D %llx", a->formID);
 	QueueScaling(a);
 	return ret;
 }
