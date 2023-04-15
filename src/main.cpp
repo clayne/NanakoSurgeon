@@ -66,11 +66,8 @@ using ReadLocker = std::shared_lock<SharedLock>;
 using WriteLocker = std::unique_lock<SharedLock>;
 unordered_map<uint32_t, float> actorScaleQueue;
 SharedLock scaleQueueLock;
-ReadLocker scaleReadLock;
-WriteLocker scaleWriteLock;
 queue<uint32_t> actorSurgeryQueue;
 SharedLock surgeryQueueLock;
-WriteLocker surgeryWriteLock;
 
 const F4SE::TaskInterface* taskInterface;
 
@@ -270,7 +267,7 @@ void ApplyBoneData(NiAVObject* node, TranslationData& data)
 
 void DoSurgery()
 {
-	surgeryWriteLock.lock();
+	WriteLocker lock(surgeryQueueLock);
 	while (!actorSurgeryQueue.empty()) {
 		uint32_t formID = actorSurgeryQueue.front();
 		actorSurgeryQueue.pop();
@@ -333,14 +330,12 @@ void DoSurgery()
 			}
 		}
 	}
-	surgeryWriteLock.unlock();
 }
 
 void QueueSurgery(Actor* a)
 {
-	surgeryWriteLock.lock();
+	WriteLocker lock(surgeryQueueLock);
 	actorSurgeryQueue.push(a->formID);
-	surgeryWriteLock.unlock();
 }
 
 void DoGlobalSurgery()
@@ -357,16 +352,15 @@ void DoGlobalSurgery()
 
 void RemoveFromScaleQueue(const uint32_t formID)
 {
-	scaleWriteLock.lock();
+	WriteLocker lock(scaleQueueLock);
 	actorScaleQueue.erase(formID);
-	scaleWriteLock.unlock();
 }
 
 void DoScaling()
 {
-	scaleReadLock.lock();
+	ReadLocker lock(scaleQueueLock);
 	unordered_map<uint32_t, float> tempScaleQueue = actorScaleQueue;
-	scaleReadLock.unlock();
+	lock.unlock();
 	for (auto& [formID, scale] : tempScaleQueue) {
 		auto form = TESForm::GetFormByID(formID);
 		//_MESSAGE("Scaling FormID %llx", formID);
@@ -418,11 +412,10 @@ void QueueScaling(Actor* a)
 			scale = npcit->second;
 			//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
 		}
-		scaleWriteLock.lock();
+		WriteLocker lock(scaleQueueLock);
 		if (scale >= 0.f && actorScaleQueue.find(a->formID) == actorScaleQueue.end()) {
 			actorScaleQueue.insert(pair<uint32_t, float>(a->formID, scale));
 		}
-		scaleWriteLock.unlock();
 	}
 }
 
@@ -634,14 +627,6 @@ void InitializePlugin()
 
 	MenuWatcher* mw = new MenuWatcher();
 	UI::GetSingleton()->GetEventSource<MenuOpenCloseEvent>()->RegisterSink(mw);
-
-	scaleReadLock = ReadLocker(scaleQueueLock);
-	scaleReadLock.unlock();
-	scaleWriteLock = WriteLocker(scaleQueueLock);
-	scaleWriteLock.unlock();
-
-	surgeryWriteLock = WriteLocker(surgeryQueueLock);
-	surgeryWriteLock.unlock();
 }
 
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4SE::PluginInfo* a_info)
