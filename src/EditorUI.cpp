@@ -39,6 +39,7 @@ namespace EditorUI {
 
 	// Hook variables
 	REL::Relocation<uintptr_t> ptr_D3D11CreateDeviceAndSwapChainCall{ REL::ID(224250), 0x419 };
+	REL::Relocation<uintptr_t> ptr_D3D11CreateDeviceAndSwapChain{ REL::ID(254484)};
 	typedef HRESULT (*FnD3D11CreateDeviceAndSwapChain)(IDXGIAdapter*,
 		D3D_DRIVER_TYPE,
 		HMODULE, UINT,
@@ -57,6 +58,9 @@ namespace EditorUI {
 	typedef BOOL (*FnClipCursor)(const RECT*);
 	FnClipCursor ClipCursor_Orig;
 	WNDPROC WndProc_Orig;
+	REL::Relocation<uintptr_t> ptr_RegisterClassA{ REL::ID(514993) };
+	typedef ATOM (*FnRegisterClassA)(const WNDCLASSEXA* wnd);
+	FnRegisterClassA RegisterClassA_Orig;
 
 	// Stored variables for ImGui render
 	RECT windowRect;
@@ -65,6 +69,7 @@ namespace EditorUI {
 	WRL::ComPtr<IDXGISwapChain> d3d11SwapChain;
 	WRL::ComPtr<ID3D11Device> d3d11Device;
 	WRL::ComPtr<ID3D11DeviceContext> d3d11Context;
+	HWND window;
 
 	// Variables for functionality
 	static const ImWchar ranges[] = {
@@ -135,6 +140,7 @@ namespace EditorUI {
 	std::string str_CannotRevert = "해당 작업은 되돌릴 수 없습니다. 계속하시겠습니까?";
 	std::string str_Positive = "예";
 	std::string str_Negative = "아니오";
+	std::string str_Cancel = "취소";
 	std::string str_Add = "추가하기";
 	std::string str_RaceEmpty = "추가 가능한 종족이 없습니다!";
 	std::string str_Gender = "성별";
@@ -186,6 +192,15 @@ namespace EditorUI {
 		return CallWindowProc(WndProc_Orig, hWnd, msg, wParam, lParam);
 	}
 
+	ATOM __stdcall HookedRegisterClassA(const WNDCLASSEXA* wnd) {
+		WNDCLASSEXA tmp = *wnd;
+
+		WndProc_Orig = wnd->lpfnWndProc;
+		tmp.lpfnWndProc = WndProcHandler;
+
+		return RegisterClassA_Orig(&tmp);
+	}
+
 	HRESULT __stdcall HookedPresent(IDXGISwapChain* SwapChain, UINT SyncInterval, UINT Flags) {
 		if (Window::GetSingleton()) {
 			if (!Window::imguiInitialized) {
@@ -230,7 +245,7 @@ namespace EditorUI {
 			D3D11Present_Orig = (FnD3D11Present)swapChain_vtbl.write_vfunc(8, &HookedPresent);
 			_MESSAGE("D3D11 Device created. SwapChain vtbl %llx", swapChain_vtbl.address());
 
-			auto window = ::GetActiveWindow();
+			window = ::GetActiveWindow();
 
 			::GetWindowRect(window, &windowRect);
 
@@ -244,10 +259,14 @@ namespace EditorUI {
 
 	void HookD3D11() {
 		_MESSAGE("Hooking D3D11 calls");
-		F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
-		D3D11CreateDeviceAndSwapChain_Orig = (FnD3D11CreateDeviceAndSwapChain)trampoline.write_call<5>(ptr_D3D11CreateDeviceAndSwapChainCall.address(), &HookedD3D11CreateDeviceAndSwapChain);
+		//F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
+		//D3D11CreateDeviceAndSwapChain_Orig = (FnD3D11CreateDeviceAndSwapChain)trampoline.write_call<5>(ptr_D3D11CreateDeviceAndSwapChainCall.address(), &HookedD3D11CreateDeviceAndSwapChain);
+		D3D11CreateDeviceAndSwapChain_Orig = *(FnD3D11CreateDeviceAndSwapChain*)ptr_D3D11CreateDeviceAndSwapChain.address();
+		ptr_D3D11CreateDeviceAndSwapChain.write_vfunc(0, &HookedD3D11CreateDeviceAndSwapChain);
 		ClipCursor_Orig = *(FnClipCursor*)ptr_ClipCursor.address();
 		ptr_ClipCursor.write_vfunc(0, &HookedClipCursor);
+		RegisterClassA_Orig = *(FnRegisterClassA*)ptr_RegisterClassA.address();
+		ptr_RegisterClassA.write_vfunc(0, &HookedRegisterClassA);
 		_MESSAGE("CreateDevice %llx ClipCursor %llx", D3D11CreateDeviceAndSwapChain_Orig, ClipCursor_Orig);
 	}
 
@@ -352,7 +371,7 @@ namespace EditorUI {
 		DXGI_SWAP_CHAIN_DESC sd;
 		d3d11SwapChain->GetDesc(&sd);
 
-		WndProc_Orig = (WNDPROC) SetWindowLongPtr(sd.OutputWindow, GWLP_WNDPROC, (LONG_PTR)WndProcHandler);
+		//WndProc_Orig = (WNDPROC) SetWindowLongPtr(sd.OutputWindow, GWLP_WNDPROC, (LONG_PTR)WndProcHandler);
 
 		ImGui::CreateContext();
 		imguiIO = ImGui::GetIO();
@@ -362,8 +381,7 @@ namespace EditorUI {
 
 		ImGui::StyleColorsDark();
 
-
-		bool imguiWin32Init = ImGui_ImplWin32_Init(sd.OutputWindow);
+		bool imguiWin32Init = ImGui_ImplWin32_Init(window);
 		bool imguiDX11Init = ImGui_ImplDX11_Init(d3d11Device.Get(), d3d11Context.Get());
 
 		if (imguiWin32Init && imguiDX11Init) {
@@ -421,6 +439,54 @@ namespace EditorUI {
 		if (ImGui::Button(str_ResetPlayer.c_str(), sz)) {
 			if (p->Get3D()) {
 				p->Load3D(true);
+				Visit(p->Get3D(), [](RE::NiAVObject* obj) {
+					if (!obj->IsNode())
+						return false;
+
+					std::string name{ obj->name.c_str() };
+					for (auto& c : name) {
+						c = (char)tolower(c);
+					}
+
+					if (name.find("surgeoninserted") != std::string::npos) {
+						RE::NiNode* parent = obj->parent;
+						if (parent) {
+							parent->DetachChild(obj);
+							obj->parent = nullptr;
+							if (obj->IsNode()->children.size() > 0) {
+								RE::NiAVObject* child = obj->IsNode()->children[0].get();
+								obj->IsNode()->DetachChild(child);
+								parent->AttachChild(child, true);
+								child->parent = parent;
+							}
+						}
+					}
+					return false;
+				});
+				Visit(p->Get3D(true), [](RE::NiAVObject* obj) {
+					if (!obj->IsNode())
+						return false;
+
+					std::string name{ obj->name.c_str() };
+					for (auto& c : name) {
+						c = (char)tolower(c);
+					}
+
+					if (name.find("surgeoninserted") != std::string::npos) {
+						RE::NiNode* parent = obj->parent;
+						if (parent) {
+							parent->DetachChild(obj);
+							obj->parent = nullptr;
+							if (obj->IsNode()->children.size() > 0) {
+								RE::NiAVObject* child = obj->IsNode()->children[0].get();
+								obj->IsNode()->DetachChild(child);
+								parent->AttachChild(child, true);
+								child->parent = parent;
+							}
+						}
+					}
+					return false;
+				});
 				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkeleton);
 				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kScale);
 				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkin);
@@ -472,8 +538,21 @@ namespace EditorUI {
 								}
 								if (ImGui::Selectable(str_DeleteRace.c_str())) {
 									jsonData[pluginit->first].erase(*raceit);
+									auto findForms = jsonRaceList.find(pluginit->first);
+									if (findForms != jsonRaceList.end()) {
+										vector<std::string> tempList = findForms->second;
+										std::string tempFormID = *raceit;
+										findForms->second.clear();
+										for (std::string formID : tempList) {
+											if (formID != tempFormID) {
+												findForms->second.push_back(formID);
+											}
+										}
+									}
 									isRaceNodeOpen = false;
 									ImGui::CloseCurrentPopup();
+									ImGui::EndPopup();
+									break;
 								}
 								ImGui::EndPopup();
 							}
@@ -656,7 +735,7 @@ namespace EditorUI {
 				if (ImGui::BeginPopupContextItem((pluginNode_ID + "_Popup").c_str())) {
 					if (ImGui::Selectable(str_DeletePlugin.c_str())) {
 						jsonData.erase(pluginit->first);
-						jsonRaceList.erase(pluginit);
+						jsonNPCList.erase(pluginit);
 						isPluginNodeOpen = false;
 						ImGui::CloseCurrentPopup();
 					}
@@ -666,7 +745,7 @@ namespace EditorUI {
 					for (auto npcit = pluginit->second.begin(); npcit != pluginit->second.end(); ++npcit) {
 						RE::TESNPC* npcForm = GetFormFromMod(pluginit->first, std::stoi(*npcit, 0, 16))->As<RE::TESNPC>();
 						if (npcForm) {
-							std::string npcNode_ID = pluginit->first + *npcit;
+							std::string npcNode_ID = pluginit->first + (*npcit);
 							bool isNPCNodeOpen = ImGui::TreeNodeEx(npcNode_ID.c_str(), nodeFlags, "%s (%s)", npcForm->GetFullName(), npcit->c_str());
 							if (ImGui::BeginPopupContextItem((npcNode_ID + "_Popup").c_str())) {
 								if (ImGui::Selectable(str_AddBone.c_str())) {
@@ -676,8 +755,21 @@ namespace EditorUI {
 								}
 								if (ImGui::Selectable(str_DeleteNPC.c_str())) {
 									jsonData[pluginit->first].erase(*npcit);
+									auto findForms = jsonNPCList.find(pluginit->first);
+									if (findForms != jsonNPCList.end()) {
+										vector<std::string> tempList = findForms->second;
+										std::string tempFormID = *npcit;
+										findForms->second.clear();
+										for (std::string formID : tempList) {
+											if (formID != tempFormID) {
+												findForms->second.push_back(formID);
+											}
+										}
+									}
 									isNPCNodeOpen = false;
 									ImGui::CloseCurrentPopup();
+									ImGui::EndPopup();
+									break;
 								}
 								ImGui::EndPopup();
 							}
@@ -942,7 +1034,7 @@ namespace EditorUI {
 					}
 					ImGui::EndCombo();
 				}
-				if (ImGui::Button(str_Add.c_str(), ImVec2(200, 0))) {
+				if (ImGui::Button(str_Add.c_str(), ImVec2(120, 0))) {
 					FormRecord& formRecord = raceRecords.at(raceCurrentIdx);
 					auto existit = jsonRaceList.find(formRecord.plugin);
 					if (existit == jsonRaceList.end()) {
@@ -951,6 +1043,10 @@ namespace EditorUI {
 						existit->second.push_back(formRecord.formID);
 					}
 					jsonData[formRecord.plugin][formRecord.formID] = nlohmann::json({});
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(str_Cancel.c_str(), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			} else {
@@ -1002,7 +1098,7 @@ namespace EditorUI {
 					}
 					ImGui::EndCombo();
 				}
-				if (ImGui::Button(str_Add.c_str(), ImVec2(200, 0))) {
+				if (ImGui::Button(str_Add.c_str(), ImVec2(120, 0))) {
 					FormRecord& formRecord = npcRecords.at(npcCurrentIdx);
 					auto existit = jsonNPCList.find(formRecord.plugin);
 					if (existit == jsonNPCList.end()) {
@@ -1011,6 +1107,10 @@ namespace EditorUI {
 						existit->second.push_back(formRecord.formID);
 					}
 					jsonData[formRecord.plugin][formRecord.formID] = nlohmann::json({});
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(str_Cancel.c_str(), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			} else {
@@ -1047,8 +1147,12 @@ namespace EditorUI {
 					}
 					ImGui::EndCombo();
 				}
-				if (ImGui::Button(str_Add.c_str(), ImVec2(200, 0))) {
+				if (ImGui::Button(str_Add.c_str(), ImVec2(120, 0))) {
 					(*jsonInsertTarget)[genderList.at(genderCurrentIdx)] = nlohmann::json({});
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button(str_Cancel.c_str(), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			} else {
@@ -1119,7 +1223,7 @@ namespace EditorUI {
 					break;
 				}
 			}
-			if (ImGui::Button(str_Add.c_str(), ImVec2(200, 0))) {
+			if (ImGui::Button(str_Add.c_str(), ImVec2(120, 0))) {
 				std::string nameStr = boneList.at(boneCurrentIdx);
 				errorMsg = false;
 				if (userInputText) {
@@ -1143,6 +1247,10 @@ namespace EditorUI {
 					errorCode = 0;
 					ImGui::CloseCurrentPopup();
 				}
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(str_Cancel.c_str(), ImVec2(120, 0))) {
+				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
 		}
