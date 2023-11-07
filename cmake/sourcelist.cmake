@@ -1,4 +1,14 @@
 set(SOURCES
 	src/PCH.h
 	src/main.cpp
+	src/EditorUI.h
+	src/EditorUI.cpp
+	src/fonts/NotoSans.cpp
+	src/imgui/imgui.cpp
+	src/imgui/imgui_demo.cpp
+	src/imgui/imgui_draw.cpp
+	src/imgui/imgui_impl_dx11.cpp
+	src/imgui/imgui_impl_win32.cpp
+	src/imgui/imgui_tables.cpp
+	src/imgui/imgui_widgets.cpp
 )
