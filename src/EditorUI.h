@@ -60,7 +60,8 @@ namespace EditorUI {
 		bool shouldDraw = false;
 		void BuildBoneData(auto json, std::vector<TranslationData>& map, float& s);
 		void SetSelected(std::string plugin, std::string formID, FORM_TYPE formType, std::string genderStr);
-		void ApplySelectedToPlayer();
+		void Reset3DByFormID(uint32_t formID);
+		void ApplySelectedToTarget();
 		void OnPresetChange();
 		void ChangeCurrentPreset(int idx);
 		void HelpMarker(const char* desc);

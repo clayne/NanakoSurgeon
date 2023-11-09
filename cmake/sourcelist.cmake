@@ -3,6 +3,8 @@ set(SOURCES
 	src/main.cpp
 	src/EditorUI.h
 	src/EditorUI.cpp
+	src/Localization.h
+	src/Localization.cpp
 	src/fonts/NotoSans.cpp
 	src/imgui/imgui.cpp
 	src/imgui/imgui_demo.cpp

@@ -1,8 +1,10 @@
 #include "EditorUI.h"
+#include "Localization.h"
 #include "nlohmann/json.hpp"
 #include <algorithm>
 #include <d3d11.h>
 #include <fstream>
+#include <unordered_set>
 #include <wrl.h>
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_dx11.h>
@@ -11,6 +13,7 @@
 namespace WRL = Microsoft::WRL;
 using std::unordered_map;
 using std::vector;
+using std::unordered_set;
 
 extern RE::PlayerCharacter* p;
 extern uint32_t editorKey;
@@ -91,66 +94,10 @@ namespace EditorUI {
 	unordered_map<std::string, vector<std::string>> jsonNPCList;
 	unordered_map<std::string, bool> hasSetScale;
 	auto* jsonInsertTarget = &(jsonData);
+	uint32_t previewTarget = 0x14;
+	unordered_set<uint32_t> previewedList;
 
 	// Strings for future localization or stuff
-	std::string str_EditorName = "외과의사 나나코 편집기";
-	std::string str_File = "파일";
-	std::string str_New = "새로 만들기";
-	std::string str_Save = "저장";
-	std::string str_Delete = "삭제";
-	std::string str_Preset = "프리셋";
-	std::string str_Setting = "설정";
-	std::string str_ResetPlayer = "플레이어 모델 초기화";
-	std::string str_ApplySelectedToPlayer = "선택된 항목을 플레이어에게 적용하기";
-	std::string str_ApplySelectedToPlayer_Help =
-		"현재 선택된 종족/NPC 항목을 플레이어에 적용시켜 미리볼 수 있습니다.\n"
-		"뼈대가 일치하지 않는 경우 최종 결과물에 차이가 있을 수 있다는 점 유의해주세요.";
-	std::string str_NoPresetLoaded = "프리셋 데이터가 없습니다.";
-	std::string str_Race = "종족";
-	std::string str_AddRace = "종족 추가";
-	std::string str_AddGender = "성별 추가";
-	std::string str_AddBone = "뼈 추가";
-	std::string str_AddNPC = "NPC 추가";
-	std::string str_DeletePlugin = "플러그인 삭제";
-	std::string str_DeleteRace = "종족 삭제";
-	std::string str_DeleteNPC = "NPC 삭제";
-	std::string str_DeleteGender = "성별 삭제";
-	std::string str_DeleteBone = "뼈 삭제";
-	std::string str_HasSetScale = "스케일 변경 사용";
-	std::string str_Scale = "스케일";
-	std::string str_ExtraData = "세부 설정";
-	std::string str_IgnoreXYZ = "XYZ 값 무시";
-	std::string str_Insertion = "추가뼈 삽입";
-	std::string str_Insertion_Help =
-		"Head와 같은 뼈는 애니메이션이 위치와 스케일을 조정하기 때문에 외과의사 나나코가 수정할 수 없습니다..\n"
-		"이러한 뼈를 수정하고 싶으시다면 해당 기능을 활성화해주세요.";
-	std::string str_TpOnly = "3인칭에만 적용";
-	std::string str_Translation = "위치 XYZ";
-	std::string str_Modal_NewFile = "새 파일 만들기";
-	std::string str_Modal_AskAgain = "정말요?";
-	std::string str_Modal_AddRace = "종족 추가";
-	std::string str_Modal_AddNPC = "NPC 추가";
-	std::string str_Modal_AddGender = "성별 추가";
-	std::string str_Modal_AddBone = "뼈 추가";
-	std::string str_EnterFileName = "파일 이름을 입력하세요.";
-	std::string str_Create = "만들기";
-	std::string str_EnterText = "내용을 입력하세요!";
-	std::string str_CannotDeleteDefault = "기본 프리셋은 삭제할 수 없습니다!";
-	std::string str_Understand = "그렇군요";
-	std::string str_CannotRevert = "해당 작업은 되돌릴 수 없습니다. 계속하시겠습니까?";
-	std::string str_Positive = "예";
-	std::string str_Negative = "아니오";
-	std::string str_Cancel = "취소";
-	std::string str_Add = "추가하기";
-	std::string str_RaceEmpty = "추가 가능한 종족이 없습니다!";
-	std::string str_Gender = "성별";
-	std::string str_GenderEmpty = "추가 가능한 성별이 없습니다!";
-	std::string str_PlayerBoneNotFound = "플레이어 뼈대를 찾을 수 없습니다. 직접 입력만 가능합니다.";
-	std::string str_ManualInput = "직접 입력";
-	std::string str_BoneName = "뼈 이름";
-	std::string str_AlreadyExists = "이미 목록에 있습니다!";
-	std::string str_CannotUseName = "사용할 수 없는 이름입니다!";
-
 	std::string str_BoneExtraX = "X";
 	std::string str_BoneExtraY = "Y";
 	std::string str_BoneExtraZ = "Z";
@@ -192,14 +139,15 @@ namespace EditorUI {
 		return CallWindowProc(WndProc_Orig, hWnd, msg, wParam, lParam);
 	}
 
-	ATOM __stdcall HookedRegisterClassA(const WNDCLASSEXA* wnd) {
+	/* ATOM __stdcall HookedRegisterClassA(const WNDCLASSEXA* wnd)
+	{
 		WNDCLASSEXA tmp = *wnd;
 
 		WndProc_Orig = wnd->lpfnWndProc;
 		tmp.lpfnWndProc = WndProcHandler;
 
 		return RegisterClassA_Orig(&tmp);
-	}
+	}*/
 
 	HRESULT __stdcall HookedPresent(IDXGISwapChain* SwapChain, UINT SyncInterval, UINT Flags) {
 		if (Window::GetSingleton()) {
@@ -259,14 +207,14 @@ namespace EditorUI {
 
 	void HookD3D11() {
 		_MESSAGE("Hooking D3D11 calls");
-		//F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
-		//D3D11CreateDeviceAndSwapChain_Orig = (FnD3D11CreateDeviceAndSwapChain)trampoline.write_call<5>(ptr_D3D11CreateDeviceAndSwapChainCall.address(), &HookedD3D11CreateDeviceAndSwapChain);
-		D3D11CreateDeviceAndSwapChain_Orig = *(FnD3D11CreateDeviceAndSwapChain*)ptr_D3D11CreateDeviceAndSwapChain.address();
-		ptr_D3D11CreateDeviceAndSwapChain.write_vfunc(0, &HookedD3D11CreateDeviceAndSwapChain);
+		F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
+		D3D11CreateDeviceAndSwapChain_Orig = (FnD3D11CreateDeviceAndSwapChain)trampoline.write_call<5>(ptr_D3D11CreateDeviceAndSwapChainCall.address(), &HookedD3D11CreateDeviceAndSwapChain);
+		//D3D11CreateDeviceAndSwapChain_Orig = *(FnD3D11CreateDeviceAndSwapChain*)ptr_D3D11CreateDeviceAndSwapChain.address();
+		//ptr_D3D11CreateDeviceAndSwapChain.write_vfunc(0, &HookedD3D11CreateDeviceAndSwapChain);
 		ClipCursor_Orig = *(FnClipCursor*)ptr_ClipCursor.address();
 		ptr_ClipCursor.write_vfunc(0, &HookedClipCursor);
-		RegisterClassA_Orig = *(FnRegisterClassA*)ptr_RegisterClassA.address();
-		ptr_RegisterClassA.write_vfunc(0, &HookedRegisterClassA);
+		//RegisterClassA_Orig = *(FnRegisterClassA*)ptr_RegisterClassA.address();
+		//ptr_RegisterClassA.write_vfunc(0, &HookedRegisterClassA);
 		_MESSAGE("CreateDevice %llx ClipCursor %llx", D3D11CreateDeviceAndSwapChain_Orig, ClipCursor_Orig);
 	}
 
@@ -319,7 +267,73 @@ namespace EditorUI {
 		}
 	}
 
-	void Window::ApplySelectedToPlayer() {
+	void Window::Reset3DByFormID(uint32_t formID) {
+		RE::Actor* a = RE::TESForm::GetFormByID(formID)->As<RE::Actor>();
+		if (a && a->Get3D()) {
+			a->Load3D(true);
+			Visit(a->Get3D(false), [](RE::NiAVObject* obj) {
+				if (!obj->IsNode())
+					return false;
+
+				std::string name{ obj->name.c_str() };
+				for (auto& c : name) {
+					c = (char)tolower(c);
+				}
+
+				if (name.find("surgeoninserted") != std::string::npos) {
+					RE::NiNode* parent = obj->parent;
+					if (parent) {
+						parent->DetachChild(obj);
+						obj->parent = nullptr;
+						if (obj->IsNode()->children.size() > 0) {
+							RE::NiAVObject* child = obj->IsNode()->children[0].get();
+							obj->IsNode()->DetachChild(child);
+							parent->AttachChild(child, true);
+							child->parent = parent;
+						}
+					}
+				}
+				return false;
+			});
+			if (a == p) {
+				Visit(a->Get3D(true), [](RE::NiAVObject* obj) {
+					if (!obj->IsNode())
+						return false;
+
+					std::string name{ obj->name.c_str() };
+					for (auto& c : name) {
+						c = (char)tolower(c);
+					}
+
+					if (name.find("surgeoninserted") != std::string::npos) {
+						RE::NiNode* parent = obj->parent;
+						if (parent) {
+							parent->DetachChild(obj);
+							obj->parent = nullptr;
+							if (obj->IsNode()->children.size() > 0) {
+								RE::NiAVObject* child = obj->IsNode()->children[0].get();
+								obj->IsNode()->DetachChild(child);
+								parent->AttachChild(child, true);
+								child->parent = parent;
+							}
+						}
+					}
+					return false;
+				});
+			}
+			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkeleton);
+			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kScale);
+			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkin);
+			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kFace);
+			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kHead);
+			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kModel);
+		}
+	}
+
+	void Window::ApplySelectedToTarget() {
+		RE::Actor* a = RE::TESForm::GetFormByID(previewTarget)->As<RE::Actor>();
+		if (!a)
+			return;
 		if (selectedFormID != "") {
 			vector<TranslationData> tempTransData;
 			float tempScale = -1.f;
@@ -332,9 +346,12 @@ namespace EditorUI {
 					BuildBoneData(jsonData[selectedPlugin][selectedFormID][str_Female], tempTransData, tempScale);
 				}
 			}
-			DoSurgeryPreview(p, tempTransData);
+			DoSurgeryPreview(a, tempTransData);
 			if (tempScale > 0) {
-				DoScalePreview(p, tempScale);
+				DoScalePreview(a, tempScale);
+			}
+			if (previewedList.find(previewTarget) == previewedList.end()) {
+				previewedList.insert(previewTarget);
 			}
 		}
 	}
@@ -371,7 +388,7 @@ namespace EditorUI {
 		DXGI_SWAP_CHAIN_DESC sd;
 		d3d11SwapChain->GetDesc(&sd);
 
-		//WndProc_Orig = (WNDPROC) SetWindowLongPtr(sd.OutputWindow, GWLP_WNDPROC, (LONG_PTR)WndProcHandler);
+		WndProc_Orig = (WNDPROC) SetWindowLongPtr(sd.OutputWindow, GWLP_WNDPROC, (LONG_PTR)WndProcHandler);
 
 		ImGui::CreateContext();
 		imguiIO = ImGui::GetIO();
@@ -386,6 +403,8 @@ namespace EditorUI {
 
 		if (imguiWin32Init && imguiDX11Init) {
 			_MESSAGE("ImGui Init Success");
+			Localization::InitImGuiSettings();
+			Localization::LoadLocalizations();
 		}
 		
 		Window::imguiInitialized = true;
@@ -400,20 +419,28 @@ namespace EditorUI {
 		ImGui::SetNextWindowSize(ImVec2(400, 600), ImGuiCond_FirstUseEver);
 		ImGuiWindowFlags window_flags = 0;
 		window_flags |= ImGuiWindowFlags_MenuBar;
-		ImGui::Begin(str_EditorName.c_str(), NULL, window_flags);
+		ImGui::Begin(Localization::GetLocalizedPChar("str_EditorName"), NULL, window_flags);
 
 		int requestPopup = 0;
 
 		if (ImGui::BeginMenuBar()) {
-			if (ImGui::BeginMenu(str_File.c_str())) {
-				if (ImGui::MenuItem(str_New.c_str())) {
+			if (ImGui::BeginMenu(Localization::GetLocalizedPChar("str_File"))) {
+				if (ImGui::MenuItem(Localization::GetLocalizedPChar("str_New"))) {
 					requestPopup = 1;
 				}
-				if (ImGui::MenuItem(str_Save.c_str())) {
+				if (ImGui::MenuItem(Localization::GetLocalizedPChar("str_Save"))) {
 					SaveCurrentPreset();
 				}
-				if (ImGui::MenuItem(str_Delete.c_str())) {
+				if (ImGui::MenuItem(Localization::GetLocalizedPChar("str_Delete"))) {
 					requestPopup = 2;
+				}
+				ImGui::EndMenu();
+			}
+			if (ImGui::BeginMenu(Localization::GetLocalizedPChar("str_Language"))) {
+				for (auto& lang : Localization::GetSupportedLanguages()) {
+					if (ImGui::MenuItem(lang.c_str())) {
+						Localization::SetCurrentLanguage(lang);
+					}
 				}
 				ImGui::EndMenu();
 			}
@@ -421,7 +448,7 @@ namespace EditorUI {
 		}
 
 		const char* previewValue = presetList.at(presetCurrentIdx).displayName.c_str();
-		if (ImGui::BeginCombo(str_Preset.c_str(), previewValue, 0)) {
+		if (ImGui::BeginCombo(Localization::GetLocalizedPChar("str_Preset"), previewValue, 0)) {
 			for (int n = 0; n < presetList.size(); n++) {
 				const bool is_selected = (presetCurrentIdx == n);
 				if (ImGui::Selectable(presetList.at(n).displayName.c_str(), is_selected)) {
@@ -434,79 +461,40 @@ namespace EditorUI {
 			ImGui::EndCombo();
 		}
 
-		ImGui::SeparatorText(str_Setting.c_str());
+		ImGui::SeparatorText(Localization::GetLocalizedPChar("str_Setting"));
 		ImVec2 sz = ImVec2(-FLT_MIN, 0.0f);
-		if (ImGui::Button(str_ResetPlayer.c_str(), sz)) {
-			if (p->Get3D()) {
-				p->Load3D(true);
-				Visit(p->Get3D(), [](RE::NiAVObject* obj) {
-					if (!obj->IsNode())
-						return false;
-
-					std::string name{ obj->name.c_str() };
-					for (auto& c : name) {
-						c = (char)tolower(c);
-					}
-
-					if (name.find("surgeoninserted") != std::string::npos) {
-						RE::NiNode* parent = obj->parent;
-						if (parent) {
-							parent->DetachChild(obj);
-							obj->parent = nullptr;
-							if (obj->IsNode()->children.size() > 0) {
-								RE::NiAVObject* child = obj->IsNode()->children[0].get();
-								obj->IsNode()->DetachChild(child);
-								parent->AttachChild(child, true);
-								child->parent = parent;
-							}
-						}
-					}
-					return false;
-				});
-				Visit(p->Get3D(true), [](RE::NiAVObject* obj) {
-					if (!obj->IsNode())
-						return false;
-
-					std::string name{ obj->name.c_str() };
-					for (auto& c : name) {
-						c = (char)tolower(c);
-					}
-
-					if (name.find("surgeoninserted") != std::string::npos) {
-						RE::NiNode* parent = obj->parent;
-						if (parent) {
-							parent->DetachChild(obj);
-							obj->parent = nullptr;
-							if (obj->IsNode()->children.size() > 0) {
-								RE::NiAVObject* child = obj->IsNode()->children[0].get();
-								obj->IsNode()->DetachChild(child);
-								parent->AttachChild(child, true);
-								child->parent = parent;
-							}
-						}
-					}
-					return false;
-				});
-				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkeleton);
-				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kScale);
-				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkin);
-				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kFace);
-				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kHead);
-				p->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kModel);
-			}
+		if (ImGui::Button(Localization::GetLocalizedPChar("str_ResetTarget"), sz)) {
+			Reset3DByFormID(previewTarget);
 		}
-		if (ImGui::Checkbox(str_ApplySelectedToPlayer.c_str(), &applyToPlayer) && applyToPlayer) {
-			ApplySelectedToPlayer();
+		if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_ApplySelectedToTarget"), &applyToPlayer) && applyToPlayer) {
+			ApplySelectedToTarget();
 		}
 		ImGui::SameLine();
-		HelpMarker(str_ApplySelectedToPlayer_Help.c_str());
+		HelpMarker(Localization::GetLocalizedPChar("str_ApplySelectedToTarget_Help"));
+		if (applyToPlayer) {
+			RE::TESObjectREFR* refr = RE::Console::GetCurrentPickREFR().get().get();
+			RE::TESNPC* targetNPC = nullptr;
+			if (refr && refr->As<RE::Actor>()) {
+				previewTarget = refr->formID;
+				targetNPC = static_cast<RE::Actor*>(refr)->GetNPC();
+			} else {
+				previewTarget = p->formID;
+				targetNPC = p->GetNPC();
+			}
+			std::string str_PreviewTargetInfo = Localization::GetLocalizedString("str_PreviewTarget");
+			if (targetNPC) {
+				str_PreviewTargetInfo += targetNPC->GetFullName();
+				str_PreviewTargetInfo += std::format(" ({:#x})", targetNPC->formID);
+			}
+			ImGui::TextColored(ImVec4(0.f, 0.95f, 0.f, 1.f), Localization::GetLocalizedPChar("str_PreviewTargetInfo"));
+		}
 
 		if (!jsonLoaded) {
-			ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), str_NoPresetLoaded.c_str());
+			ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_NoPresetLoaded"));
 		} else {
-			ImGui::SeparatorText(str_Race.c_str());
-			if (ImGui::BeginPopupContextItem("Add Race")) {
-				if (ImGui::Selectable(str_AddRace.c_str())) {
+			ImGui::SeparatorText(Localization::GetLocalizedPChar("str_Race"));
+			if (ImGui::BeginPopupContextItem("_Popup_AddRace")) {
+				if (ImGui::Selectable(Localization::GetLocalizedPChar("str_AddRace"))) {
 					requestPopup = 3;
 					ImGui::CloseCurrentPopup();
 				}
@@ -516,7 +504,11 @@ namespace EditorUI {
 				std::string pluginNode_ID = "plugin_race_" + pluginit->first;
 				bool isPluginNodeOpen = ImGui::TreeNodeEx(pluginNode_ID.c_str(), nodeFlags, "%s", pluginit->first.c_str());
 				if (ImGui::BeginPopupContextItem((pluginNode_ID + "_Popup").c_str())) {
-					if (ImGui::Selectable(str_DeletePlugin.c_str())) {
+					if (ImGui::Selectable(Localization::GetLocalizedPChar("str_AddRace"))) {
+						requestPopup = 3;
+						ImGui::CloseCurrentPopup();
+					}
+					if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeletePlugin"))) {
 						jsonData.erase(pluginit->first);
 						jsonRaceList.erase(pluginit);
 						isPluginNodeOpen = false;
@@ -531,12 +523,12 @@ namespace EditorUI {
 							std::string raceNode_ID = raceForm->GetFormEditorID();
 							bool isRaceNodeOpen = ImGui::TreeNodeEx(raceNode_ID.c_str(), nodeFlags, "%s (%s)", raceNode_ID.c_str(), raceit->c_str());
 							if (ImGui::BeginPopupContextItem((raceNode_ID + "_Popup").c_str())) {
-								if (ImGui::Selectable(str_AddGender.c_str())) {
+								if (ImGui::Selectable(Localization::GetLocalizedPChar("str_AddGender"))) {
 									jsonInsertTarget = &jsonData[pluginit->first][*raceit];
 									requestPopup = 5;
 									ImGui::CloseCurrentPopup();
 								}
-								if (ImGui::Selectable(str_DeleteRace.c_str())) {
+								if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeleteRace"))) {
 									jsonData[pluginit->first].erase(*raceit);
 									auto findForms = jsonRaceList.find(pluginit->first);
 									if (findForms != jsonRaceList.end()) {
@@ -562,12 +554,12 @@ namespace EditorUI {
 									std::string genderNode_ID = raceNode_ID + "_" + sexit.key();
 									bool isGenderNodeOpen = ImGui::TreeNodeEx(genderNode_ID.c_str(), nodeFlags, "%s", sexit.key().c_str());
 									if (ImGui::BeginPopupContextItem((genderNode_ID + "_Popup").c_str())) {
-										if (ImGui::Selectable(str_AddBone.c_str())) {
+										if (ImGui::Selectable(Localization::GetLocalizedPChar("str_AddBone"))) {
 											jsonInsertTarget = &jsonData[pluginit->first][*raceit][sexit.key()];
 											requestPopup = 6;
 											ImGui::CloseCurrentPopup();
 										}
-										if (ImGui::Selectable(str_DeleteGender.c_str())) {
+										if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeleteGender"))) {
 											jsonData[pluginit->first][*raceit].erase(sexit.key());
 											isGenderNodeOpen = false;
 											ImGui::CloseCurrentPopup();
@@ -579,7 +571,7 @@ namespace EditorUI {
 										if (hasSetScale.find(setScale_ID) == hasSetScale.end()) {
 											hasSetScale.insert(std::pair<std::string, bool>(setScale_ID, jsonData[pluginit->first][*raceit][sexit.key()].contains(str_SetScale)));
 										}
-										if (ImGui::Checkbox(str_HasSetScale.c_str(), &hasSetScale[setScale_ID])) {
+										if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_HasSetScale"), &hasSetScale[setScale_ID])) {
 											if (!hasSetScale[setScale_ID]) {
 												if (jsonData[pluginit->first][*raceit][sexit.key()].contains(str_SetScale)) {
 													jsonData[pluginit->first][*raceit][sexit.key()].erase(str_SetScale);
@@ -592,11 +584,11 @@ namespace EditorUI {
 										}
 										if (hasSetScale[setScale_ID]) {
 											float tempScale = jsonData[pluginit->first][*raceit][sexit.key()][str_SetScale].get<float>();
-											if (ImGui::DragFloat(str_Scale.c_str(), &tempScale, 0.01f, 0.01f, 10.f, "%.2f")) {
+											if (ImGui::DragFloat(Localization::GetLocalizedPChar("str_Scale"), &tempScale, 0.01f, 0.01f, 10.f, "%.2f")) {
 												jsonData[pluginit->first][*raceit][sexit.key()][str_SetScale] = tempScale;
 												if (applyToPlayer) {
 													SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
-													ApplySelectedToPlayer();
+													ApplySelectedToTarget();
 												}
 											}
 										}
@@ -605,7 +597,7 @@ namespace EditorUI {
 												std::string boneNode_ID = genderNode_ID + "_" + boneit.key();
 												bool isBoneNodeOpen = ImGui::TreeNodeEx(boneNode_ID.c_str(), nodeFlags, "%s", boneit.key().c_str());
 												if (ImGui::BeginPopupContextItem((boneNode_ID + "_Popup").c_str())) {
-													if (ImGui::Selectable(str_DeleteBone.c_str())) {
+													if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeleteBone"))) {
 														jsonData[pluginit->first][*raceit][sexit.key()].erase(boneit.key());
 														isBoneNodeOpen = false;
 														ImGui::CloseCurrentPopup();
@@ -614,13 +606,13 @@ namespace EditorUI {
 												}
 												if (isBoneNodeOpen) {
 													std::string extraNode_ID = boneNode_ID + "_Extra";
-													bool isExtraNodeOpen = ImGui::TreeNodeEx(extraNode_ID.c_str(), nodeFlags, str_ExtraData.c_str());
+													bool isExtraNodeOpen = ImGui::TreeNodeEx(extraNode_ID.c_str(), nodeFlags, Localization::GetLocalizedPChar("str_ExtraData"));
 													if (isExtraNodeOpen) {
 														bool ignoreXYZ = false;
 														if (jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].contains(str_BoneExtraIgnoreXYZ)) {
 															ignoreXYZ = jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraIgnoreXYZ];
 														}
-														if (ImGui::Checkbox(str_IgnoreXYZ.c_str(), &ignoreXYZ)) {
+														if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_IgnoreXYZ"), &ignoreXYZ)) {
 															if (!ignoreXYZ) {
 																if (jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].contains(str_BoneExtraIgnoreXYZ)) {
 																	jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].erase(str_BoneExtraIgnoreXYZ);
@@ -632,14 +624,14 @@ namespace EditorUI {
 															}
 															if (applyToPlayer) {
 																SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
-																ApplySelectedToPlayer();
+																ApplySelectedToTarget();
 															}
 														}
 														bool insertion = false;
 														if (jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].contains(str_BoneExtraInsertion)) {
 															insertion = jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraInsertion];
 														}
-														if (ImGui::Checkbox(str_Insertion.c_str(), &insertion)) {
+														if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_Insertion"), &insertion)) {
 															if (!insertion) {
 																if (jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].contains(str_BoneExtraInsertion)) {
 																	jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].erase(str_BoneExtraInsertion);
@@ -651,16 +643,16 @@ namespace EditorUI {
 															}
 															if (applyToPlayer) {
 																SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
-																ApplySelectedToPlayer();
+																ApplySelectedToTarget();
 															}
 														}
 														ImGui::SameLine();
-														HelpMarker(str_Insertion_Help.c_str());
+														HelpMarker(Localization::GetLocalizedPChar("str_Insertion_Help"));
 														bool tponly = false;
 														if (jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].contains(str_BoneExtraTpOnly)) {
 															tponly = jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraTpOnly];
 														}
-														if (ImGui::Checkbox(str_TpOnly.c_str(), &tponly)) {
+														if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_TpOnly"), &tponly)) {
 															if (!tponly) {
 																if (jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].contains(str_BoneExtraTpOnly)) {
 																	jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].erase(str_BoneExtraTpOnly);
@@ -672,7 +664,7 @@ namespace EditorUI {
 															}
 															if (applyToPlayer) {
 																SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
-																ApplySelectedToPlayer();
+																ApplySelectedToTarget();
 															}
 														}
 														ImGui::TreePop();
@@ -687,24 +679,24 @@ namespace EditorUI {
 													if (jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].contains(str_BoneExtraZ)) {
 														transVec4f[2] = jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraZ].get<float>();
 													}
-													if (ImGui::DragFloat3(str_Translation.c_str(), transVec4f, 0.01f, -20.f, 20.f)) {
+													if (ImGui::DragFloat3(Localization::GetLocalizedPChar("str_Translation"), transVec4f, 0.01f, -20.f, 20.f)) {
 														jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraX] = transVec4f[0];
 														jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraY] = transVec4f[1];
 														jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraZ] = transVec4f[2];
 														if (applyToPlayer) {
 															SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
-															ApplySelectedToPlayer();
+															ApplySelectedToTarget();
 														}
 													}
 													float boneScale = 1.f;
 													if (jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()].contains(str_BoneExtraScale)) {
 														boneScale = jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraScale].get<float>();
 													}
-													if (ImGui::DragFloat(str_Scale.c_str(), &boneScale, 0.01f, 0.01f, 10.f, "%.2f")) {
+													if (ImGui::DragFloat(Localization::GetLocalizedPChar("str_Scale"), &boneScale, 0.01f, 0.01f, 10.f, "%.2f")) {
 														jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraScale] = boneScale;
 														if (applyToPlayer) {
 															SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
-															ApplySelectedToPlayer();
+															ApplySelectedToTarget();
 														}
 													}
 													ImGui::TreePop();
@@ -722,8 +714,8 @@ namespace EditorUI {
 				}
 			}
 			ImGui::SeparatorText("NPC");
-			if (ImGui::BeginPopupContextItem("Add NPC")) {
-				if (ImGui::Selectable(str_AddNPC.c_str())) {
+			if (ImGui::BeginPopupContextItem("_Popup_AddNPC")) {
+				if (ImGui::Selectable(Localization::GetLocalizedPChar("str_AddNPC"))) {
 					requestPopup = 4;
 					ImGui::CloseCurrentPopup();
 				}
@@ -733,7 +725,11 @@ namespace EditorUI {
 				std::string pluginNode_ID = "plugin_npc_" + pluginit->first;
 				bool isPluginNodeOpen = ImGui::TreeNodeEx(pluginNode_ID.c_str(), nodeFlags, "%s", pluginit->first.c_str());
 				if (ImGui::BeginPopupContextItem((pluginNode_ID + "_Popup").c_str())) {
-					if (ImGui::Selectable(str_DeletePlugin.c_str())) {
+					if (ImGui::Selectable(Localization::GetLocalizedPChar("str_AddNPC"))) {
+						requestPopup = 4;
+						ImGui::CloseCurrentPopup();
+					}
+					if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeletePlugin"))) {
 						jsonData.erase(pluginit->first);
 						jsonNPCList.erase(pluginit);
 						isPluginNodeOpen = false;
@@ -748,12 +744,12 @@ namespace EditorUI {
 							std::string npcNode_ID = pluginit->first + (*npcit);
 							bool isNPCNodeOpen = ImGui::TreeNodeEx(npcNode_ID.c_str(), nodeFlags, "%s (%s)", npcForm->GetFullName(), npcit->c_str());
 							if (ImGui::BeginPopupContextItem((npcNode_ID + "_Popup").c_str())) {
-								if (ImGui::Selectable(str_AddBone.c_str())) {
+								if (ImGui::Selectable(Localization::GetLocalizedPChar("str_AddBone"))) {
 									jsonInsertTarget = &jsonData[pluginit->first][*npcit];
 									requestPopup = 6;
 									ImGui::CloseCurrentPopup();
 								}
-								if (ImGui::Selectable(str_DeleteNPC.c_str())) {
+								if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeleteNPC"))) {
 									jsonData[pluginit->first].erase(*npcit);
 									auto findForms = jsonNPCList.find(pluginit->first);
 									if (findForms != jsonNPCList.end()) {
@@ -778,7 +774,7 @@ namespace EditorUI {
 								if (hasSetScale.find(setScale_ID) == hasSetScale.end()) {
 									hasSetScale.insert(std::pair<std::string, bool>(setScale_ID, jsonData[pluginit->first][*npcit].contains(str_SetScale)));
 								}
-								if (ImGui::Checkbox(str_HasSetScale.c_str(), &hasSetScale[setScale_ID])) {
+								if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_HasSetScale"), &hasSetScale[setScale_ID])) {
 									if (!hasSetScale[setScale_ID]) {
 										if (jsonData[pluginit->first][*npcit].contains(str_SetScale)) {
 											jsonData[pluginit->first][*npcit].erase(str_SetScale);
@@ -791,11 +787,11 @@ namespace EditorUI {
 								}
 								if (hasSetScale[setScale_ID]) {
 									float tempScale = jsonData[pluginit->first][*npcit][str_SetScale].get<float>();
-									if (ImGui::DragFloat(str_Scale.c_str(), &tempScale, 0.01f, 0.01f, 10.f, "%.2f")) {
+									if (ImGui::DragFloat(Localization::GetLocalizedPChar("str_Scale"), &tempScale, 0.01f, 0.01f, 10.f, "%.2f")) {
 										jsonData[pluginit->first][*npcit][str_SetScale] = tempScale;
 										if (applyToPlayer) {
 											SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
-											ApplySelectedToPlayer();
+											ApplySelectedToTarget();
 										}
 									}
 								}
@@ -805,7 +801,7 @@ namespace EditorUI {
 										std::string boneNode_ID = npcNode_ID + "_" + boneit.key();
 										bool isBoneNodeOpen = ImGui::TreeNodeEx(boneNode_ID.c_str(), nodeFlags, "%s", boneit.key().c_str());
 										if (ImGui::BeginPopupContextItem((boneNode_ID + "_Popup").c_str())) {
-											if (ImGui::Selectable(str_DeleteBone.c_str())) {
+											if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeleteBone"))) {
 												jsonData[pluginit->first][*npcit].erase(boneit.key());
 												isBoneNodeOpen = false;
 												ImGui::CloseCurrentPopup();
@@ -814,13 +810,13 @@ namespace EditorUI {
 										}
 										if (isBoneNodeOpen) {
 											std::string extraNode_ID = boneNode_ID + "_Extra";
-											bool isExtraNodeOpen = ImGui::TreeNodeEx(extraNode_ID.c_str(), nodeFlags, str_ExtraData.c_str());
+											bool isExtraNodeOpen = ImGui::TreeNodeEx(extraNode_ID.c_str(), nodeFlags, Localization::GetLocalizedPChar("str_ExtraData"));
 											if (isExtraNodeOpen) {
 												bool ignoreXYZ = false;
 												if (jsonData[pluginit->first][*npcit][boneit.key()].contains(str_BoneExtraIgnoreXYZ)) {
 													ignoreXYZ = jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraIgnoreXYZ];
 												}
-												if (ImGui::Checkbox(str_IgnoreXYZ.c_str(), &ignoreXYZ)) {
+												if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_IgnoreXYZ"), &ignoreXYZ)) {
 													if (!ignoreXYZ) {
 														if (jsonData[pluginit->first][*npcit][boneit.key()].contains(str_BoneExtraIgnoreXYZ)) {
 															jsonData[pluginit->first][*npcit][boneit.key()].erase(str_BoneExtraIgnoreXYZ);
@@ -832,14 +828,14 @@ namespace EditorUI {
 													}
 													if (applyToPlayer) {
 														SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
-														ApplySelectedToPlayer();
+														ApplySelectedToTarget();
 													}
 												}
 												bool insertion = false;
 												if (jsonData[pluginit->first][*npcit][boneit.key()].contains(str_BoneExtraInsertion)) {
 													insertion = jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraInsertion];
 												}
-												if (ImGui::Checkbox(str_Insertion.c_str(), &insertion)) {
+												if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_Insertion"), &insertion)) {
 													if (!insertion) {
 														if (jsonData[pluginit->first][*npcit][boneit.key()].contains(str_BoneExtraInsertion)) {
 															jsonData[pluginit->first][*npcit][boneit.key()].erase(str_BoneExtraInsertion);
@@ -851,16 +847,16 @@ namespace EditorUI {
 													}
 													if (applyToPlayer) {
 														SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
-														ApplySelectedToPlayer();
+														ApplySelectedToTarget();
 													}
 												}
 												ImGui::SameLine();
-												HelpMarker(str_Insertion_Help.c_str());
+												HelpMarker(Localization::GetLocalizedPChar("str_Insertion_Help"));
 												bool tponly = false;
 												if (jsonData[pluginit->first][*npcit][boneit.key()].contains(str_BoneExtraTpOnly)) {
 													tponly = jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraTpOnly];
 												}
-												if (ImGui::Checkbox(str_TpOnly.c_str(), &tponly)) {
+												if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_TpOnly"), &tponly)) {
 													if (!tponly) {
 														if (jsonData[pluginit->first][*npcit][boneit.key()].contains(str_BoneExtraTpOnly)) {
 															jsonData[pluginit->first][*npcit][boneit.key()].erase(str_BoneExtraTpOnly);
@@ -872,7 +868,7 @@ namespace EditorUI {
 													}
 													if (applyToPlayer) {
 														SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
-														ApplySelectedToPlayer();
+														ApplySelectedToTarget();
 													}
 												}
 												ImGui::TreePop();
@@ -887,24 +883,24 @@ namespace EditorUI {
 											if (jsonData[pluginit->first][*npcit][boneit.key()].contains(str_BoneExtraZ)) {
 												transVec4f[2] = jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraZ].get<float>();
 											}
-											if (ImGui::DragFloat3(str_Translation.c_str(), transVec4f, 0.01f, -20.f, 20.f)) {
+											if (ImGui::DragFloat3(Localization::GetLocalizedPChar("str_Translation"), transVec4f, 0.01f, -20.f, 20.f)) {
 												jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraX] = transVec4f[0];
 												jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraY] = transVec4f[1];
 												jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraZ] = transVec4f[2];
 												if (applyToPlayer) {
 													SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
-													ApplySelectedToPlayer();
+													ApplySelectedToTarget();
 												}
 											}
 											float boneScale = 1.f;
 											if (jsonData[pluginit->first][*npcit][boneit.key()].contains(str_BoneExtraScale)) {
 												boneScale = jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraScale].get<float>();
 											}
-											if (ImGui::DragFloat(str_Scale.c_str(), &boneScale, 0.01f, 0.01f, 10.f, "%.2f")) {
+											if (ImGui::DragFloat(Localization::GetLocalizedPChar("str_Scale"), &boneScale, 0.01f, 0.01f, 10.f, "%.2f")) {
 												jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraScale] = boneScale;
 												if (applyToPlayer) {
 													SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
-													ApplySelectedToPlayer();
+													ApplySelectedToTarget();
 												}
 											}
 											ImGui::TreePop();
@@ -924,28 +920,28 @@ namespace EditorUI {
 			ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			switch (requestPopup) {
 			case 1:
-				ImGui::OpenPopup(str_Modal_NewFile.c_str());
+				ImGui::OpenPopup(Localization::GetLocalizedPChar("str_Modal_NewFile"));
 				break;
 			case 2:
-				ImGui::OpenPopup(str_Modal_AskAgain.c_str());
+				ImGui::OpenPopup(Localization::GetLocalizedPChar("str_Modal_AskAgain"));
 				break;
 			case 3:
-				ImGui::OpenPopup(str_Modal_AddRace.c_str());
+				ImGui::OpenPopup(Localization::GetLocalizedPChar("str_Modal_AddRace"));
 				break;
 			case 4:
-				ImGui::OpenPopup(str_Modal_AddNPC.c_str());
+				ImGui::OpenPopup(Localization::GetLocalizedPChar("str_Modal_AddNPC"));
 				break;
 			case 5:
-				ImGui::OpenPopup(str_Modal_AddGender.c_str());
+				ImGui::OpenPopup(Localization::GetLocalizedPChar("str_Modal_AddGender"));
 				break;
 			case 6:
-				ImGui::OpenPopup(str_Modal_AddBone.c_str());
+				ImGui::OpenPopup(Localization::GetLocalizedPChar("str_Modal_AddBone"));
 				break;
 			}
 		}
 
-		if (ImGui::BeginPopupModal(str_Modal_NewFile.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-			ImGui::Text(str_EnterFileName.c_str());
+		if (ImGui::BeginPopupModal(Localization::GetLocalizedPChar("str_Modal_NewFile"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+			ImGui::Text(Localization::GetLocalizedPChar("str_EnterFileName"));
 			ImGui::Separator();
 
 			static char filename[64] = "";
@@ -953,7 +949,7 @@ namespace EditorUI {
 			ImGui::InputText("", filename, 64);
 			ImGui::SameLine();
 			ImGui::Text(".json");
-			if (ImGui::Button(str_Create.c_str(), ImVec2(200, 0))) {
+			if (ImGui::Button(Localization::GetLocalizedPChar("str_Create"), ImVec2(200, 0))) {
 				std::string nameStr = filename;
 				if (nameStr.length() == 0) {
 					if (!errorMsg) {
@@ -967,37 +963,37 @@ namespace EditorUI {
 				}
 			}
 			if (errorMsg) {
-				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), str_EnterText.c_str());
+				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_EnterText"));
 			}
 			ImGui::EndPopup();
 		}
 
-		if (ImGui::BeginPopupModal(str_Modal_AskAgain.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+		if (ImGui::BeginPopupModal(Localization::GetLocalizedPChar("str_Modal_AskAgain"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			if (presetCurrentIdx == 0) {
-				ImGui::Text(str_CannotDeleteDefault.c_str());
+				ImGui::Text(Localization::GetLocalizedPChar("str_CannotDeleteDefault"));
 				ImGui::Separator();
 
-				if (ImGui::Button(str_Understand.c_str(), ImVec2(200, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Understand"), ImVec2(200, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			} else {
-				ImGui::Text(str_CannotRevert.c_str());
+				ImGui::Text(Localization::GetLocalizedPChar("str_CannotRevert"));
 				ImGui::Separator();
 
-				if (ImGui::Button(str_Positive.c_str(), ImVec2(120, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Positive"), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 					this->DeletePreset(presetList.at(presetCurrentIdx).path);
 				}
 				ImGui::SetItemDefaultFocus();
 				ImGui::SameLine();
-				if (ImGui::Button(str_Negative.c_str(), ImVec2(120, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Negative"), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			}
 			ImGui::EndPopup();
 		}
 
-		if (ImGui::BeginPopupModal(str_Modal_AddRace.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+		if (ImGui::BeginPopupModal(Localization::GetLocalizedPChar("str_Modal_AddRace"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			std::vector<FormRecord> raceRecords;
 			static int raceCurrentIdx = 0;
 
@@ -1022,7 +1018,7 @@ namespace EditorUI {
 				};
 				std::sort(raceRecords.begin(), raceRecords.end(), Funcs::SortByDisplayName);
 				const char* racePreviewValue = raceRecords.at(raceCurrentIdx).displayName.c_str();
-				if (ImGui::BeginCombo(str_Race.c_str(), racePreviewValue, 0)) {
+				if (ImGui::BeginCombo(Localization::GetLocalizedPChar("str_Race"), racePreviewValue, 0)) {
 					for (int n = 0; n < raceRecords.size(); n++) {
 						const bool is_selected = (raceCurrentIdx == n);
 						if (ImGui::Selectable(raceRecords.at(n).displayName.c_str(), is_selected)) {
@@ -1034,7 +1030,7 @@ namespace EditorUI {
 					}
 					ImGui::EndCombo();
 				}
-				if (ImGui::Button(str_Add.c_str(), ImVec2(120, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Add"), ImVec2(120, 0))) {
 					FormRecord& formRecord = raceRecords.at(raceCurrentIdx);
 					auto existit = jsonRaceList.find(formRecord.plugin);
 					if (existit == jsonRaceList.end()) {
@@ -1046,19 +1042,19 @@ namespace EditorUI {
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::SameLine();
-				if (ImGui::Button(str_Cancel.c_str(), ImVec2(120, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Cancel"), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			} else {
-				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), str_RaceEmpty.c_str());
-				if (ImGui::Button(str_Positive.c_str(), ImVec2(200, 0))) {
+				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_RaceEmpty"));
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Positive"), ImVec2(200, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			}
 			ImGui::EndPopup();
 		}
 
-		if (ImGui::BeginPopupModal(str_Modal_AddNPC.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+		if (ImGui::BeginPopupModal(Localization::GetLocalizedPChar("str_Modal_AddNPC"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			std::vector<FormRecord> npcRecords;
 			static int npcCurrentIdx = 0;
 
@@ -1086,7 +1082,7 @@ namespace EditorUI {
 				};
 				std::sort(npcRecords.begin(), npcRecords.end(), Funcs::SortByDisplayName);
 				const char* npcPreviewValue = npcRecords.at(npcCurrentIdx).displayName.c_str();
-				if (ImGui::BeginCombo(str_Race.c_str(), npcPreviewValue, 0)) {
+				if (ImGui::BeginCombo(Localization::GetLocalizedPChar("str_Race"), npcPreviewValue, 0)) {
 					for (int n = 0; n < npcRecords.size(); n++) {
 						const bool is_selected = (npcCurrentIdx == n);
 						if (ImGui::Selectable(npcRecords.at(n).displayName.c_str(), is_selected)) {
@@ -1098,7 +1094,7 @@ namespace EditorUI {
 					}
 					ImGui::EndCombo();
 				}
-				if (ImGui::Button(str_Add.c_str(), ImVec2(120, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Add"), ImVec2(120, 0))) {
 					FormRecord& formRecord = npcRecords.at(npcCurrentIdx);
 					auto existit = jsonNPCList.find(formRecord.plugin);
 					if (existit == jsonNPCList.end()) {
@@ -1110,19 +1106,19 @@ namespace EditorUI {
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::SameLine();
-				if (ImGui::Button(str_Cancel.c_str(), ImVec2(120, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Cancel"), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			} else {
-				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), str_RaceEmpty.c_str());
-				if (ImGui::Button(str_Positive.c_str(), ImVec2(200, 0))) {
+				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_RaceEmpty"));
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Positive"), ImVec2(200, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			}
 			ImGui::EndPopup();
 		}
 
-		if (ImGui::BeginPopupModal(str_Modal_AddGender.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+		if (ImGui::BeginPopupModal(Localization::GetLocalizedPChar("str_Modal_AddGender"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			std::vector<std::string> genderList;
 			static int genderCurrentIdx = 0;
 			if (!(*jsonInsertTarget).contains(str_Female)) {
@@ -1135,7 +1131,7 @@ namespace EditorUI {
 				if (genderCurrentIdx >= genderList.size())
 					genderCurrentIdx = (int)(genderList.size() - 1);
 				const char* genderPreviewValue = genderList.at(genderCurrentIdx).c_str();
-				if (ImGui::BeginCombo(str_Gender.c_str(), genderPreviewValue, 0)) {
+				if (ImGui::BeginCombo(Localization::GetLocalizedPChar("str_Gender"), genderPreviewValue, 0)) {
 					for (int n = 0; n < genderList.size(); n++) {
 						const bool is_selected = (genderCurrentIdx == n);
 						if (ImGui::Selectable(genderList.at(n).c_str(), is_selected)) {
@@ -1147,29 +1143,30 @@ namespace EditorUI {
 					}
 					ImGui::EndCombo();
 				}
-				if (ImGui::Button(str_Add.c_str(), ImVec2(120, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Add"), ImVec2(120, 0))) {
 					(*jsonInsertTarget)[genderList.at(genderCurrentIdx)] = nlohmann::json({});
 					ImGui::CloseCurrentPopup();
 				}
 				ImGui::SameLine();
-				if (ImGui::Button(str_Cancel.c_str(), ImVec2(120, 0))) {
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Cancel"), ImVec2(120, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			} else {
-				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), str_GenderEmpty.c_str());
-				if (ImGui::Button(str_Positive.c_str(), ImVec2(200, 0))) {
+				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_GenderEmpty"));
+				if (ImGui::Button(Localization::GetLocalizedPChar("str_Positive"), ImVec2(200, 0))) {
 					ImGui::CloseCurrentPopup();
 				}
 			}
 			ImGui::EndPopup();
 		}
 
-		if (ImGui::BeginPopupModal(str_Modal_AddBone.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+		if (ImGui::BeginPopupModal(Localization::GetLocalizedPChar("str_Modal_AddBone"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			std::vector<std::string> boneList;
 			static int boneCurrentIdx = 0;
+			RE::Actor* a = RE::TESForm::GetFormByID(previewTarget)->As<RE::Actor>();
 
-			if (p->Get3D()) {
-				RE::NiAVObject* root = p->Get3D()->GetObjectByName("Root");
+			if (a && a->Get3D()) {
+				RE::NiAVObject* root = a->Get3D()->GetObjectByName("Root");
 				Visit(root, [&boneList](RE::NiAVObject* obj) {
 					if (!obj->IsNode())
 						return false;
@@ -1181,16 +1178,16 @@ namespace EditorUI {
 					return false;
 				});
 			} else {
-				ImGui::Text(str_PlayerBoneNotFound.c_str());
+				ImGui::Text(Localization::GetLocalizedPChar("str_TargetBoneNotFound"));
 			}
 			std::sort(boneList.begin(), boneList.end());
-			boneList.push_back(str_ManualInput.c_str());
+			boneList.push_back(Localization::GetLocalizedPChar("str_ManualInput"));
 
 			if (boneCurrentIdx >= boneList.size())
 				boneCurrentIdx = (int)(boneList.size() - 1);
 
 			const char* bonePreviewValue = boneList.at(boneCurrentIdx).c_str();
-			if (ImGui::BeginCombo(str_BoneName.c_str(), bonePreviewValue, 0)) {
+			if (ImGui::BeginCombo(Localization::GetLocalizedPChar("str_BoneName"), bonePreviewValue, 0)) {
 				for (int n = 0; n < boneList.size(); n++) {
 					const bool is_selected = (boneCurrentIdx == n);
 					if (ImGui::Selectable(boneList.at(n).c_str(), is_selected)) {
@@ -1213,17 +1210,17 @@ namespace EditorUI {
 			if (errorMsg) {
 				switch (errorCode){
 				case 0:
-					ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), str_EnterText.c_str());
+					ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_EnterText"));
 					break;
 				case 1:
-					ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), str_AlreadyExists.c_str());
+					ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_AlreadyExists"));
 					break;
 				case 2:
-					ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), str_CannotUseName.c_str());
+					ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_CannotUseName"));
 					break;
 				}
 			}
-			if (ImGui::Button(str_Add.c_str(), ImVec2(120, 0))) {
+			if (ImGui::Button(Localization::GetLocalizedPChar("str_Add"), ImVec2(120, 0))) {
 				std::string nameStr = boneList.at(boneCurrentIdx);
 				errorMsg = false;
 				if (userInputText) {
@@ -1249,7 +1246,7 @@ namespace EditorUI {
 				}
 			}
 			ImGui::SameLine();
-			if (ImGui::Button(str_Cancel.c_str(), ImVec2(120, 0))) {
+			if (ImGui::Button(Localization::GetLocalizedPChar("str_Cancel"), ImVec2(120, 0))) {
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
@@ -1267,6 +1264,10 @@ namespace EditorUI {
 		if (this->shouldDraw)
 			RefreshFiles();
 		else {
+			for (uint32_t formID : previewedList) {
+				Reset3DByFormID(formID);
+			}
+			previewedList.clear();
 			LoadConfigs();
 			DoGlobalSurgery();
 			DoGlobalScaling();
