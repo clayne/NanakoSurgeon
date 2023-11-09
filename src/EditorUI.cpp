@@ -9,6 +9,7 @@
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_dx11.h>
 #include <imgui/imgui_impl_win32.h>
+#include <windowsx.h>
 #pragma execution_character_set("utf-8")
 namespace WRL = Microsoft::WRL;
 using std::unordered_map;
@@ -18,7 +19,6 @@ using std::unordered_set;
 extern RE::PlayerCharacter* p;
 extern uint32_t editorKey;
 extern char* _MESSAGE(const char* fmt, ...);
-extern char NotoSans_compressed_data_base85[4676395 + 1];
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 extern unordered_map<uint32_t, vector<TranslationData>> customRaceFemaleTranslations;
 extern unordered_map<uint32_t, vector<TranslationData>> customRaceMaleTranslations;
@@ -68,18 +68,16 @@ namespace EditorUI {
 	// Stored variables for ImGui render
 	RECT windowRect;
 	ImGuiIO imguiIO;
-	ImFont* notosans;
+	ImFont* notosansKR;
+	ImFont* notosansJP;
+	ImFont* notosansSC;
+	ImFont* notosansTC;
 	WRL::ComPtr<IDXGISwapChain> d3d11SwapChain;
 	WRL::ComPtr<ID3D11Device> d3d11Device;
 	WRL::ComPtr<ID3D11DeviceContext> d3d11Context;
 	HWND window;
 
 	// Variables for functionality
-	static const ImWchar ranges[] = {
-		0x0020,
-		0xFFFF,  //almost language of utf8 range
-		0,
-	};
 	static const ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
 	vector<PresetFile> presetList{};
 	int presetCurrentIdx = -1;
@@ -87,12 +85,13 @@ namespace EditorUI {
 	FORM_TYPE selectedFormType = FORM_TYPE::kNone;
 	RACE_GENDER selectedRaceGender = RACE_GENDER::kNone;
 	std::string selectedPlugin = "";
-	bool applyToPlayer = false;
+	bool applyToTarget = false;
 	bool jsonLoaded = false;
+	bool rotateTarget = false;
+	POINT lastMousePos = { 0, 0 };
 	nlohmann::json jsonData;
 	unordered_map<std::string, vector<std::string>> jsonRaceList;
 	unordered_map<std::string, vector<std::string>> jsonNPCList;
-	unordered_map<std::string, bool> hasSetScale;
 	auto* jsonInsertTarget = &(jsonData);
 	uint32_t previewTarget = 0x14;
 	unordered_set<uint32_t> previewedList;
@@ -118,6 +117,28 @@ namespace EditorUI {
 
 	LRESULT __stdcall WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam){
 		switch (msg) {
+		case WM_MOUSEMOVE:
+		case WM_NCMOUSEMOVE:
+		{
+			POINT mousePos = { (LONG)GET_X_LPARAM(lParam), (LONG)GET_Y_LPARAM(lParam) };
+			POINT mouseDelta = { mousePos.x - lastMousePos.x, mousePos.y - lastMousePos.y };
+			if (Window::GetSingleton()->GetShouldDraw()  && rotateTarget) {
+				if (mouseDelta.x > 0 || mouseDelta.x < 0) {
+					RE::Actor* a = RE::TESForm::GetFormByID(previewTarget)->As<RE::Actor>();
+					if (a && a->Get3D()) {
+						a->data.angle.z -= (float)mouseDelta.x / 100.f;
+					}
+				}
+			}
+			lastMousePos = mousePos;
+			break;
+		}
+		case WM_RBUTTONDOWN:
+			rotateTarget = true;
+			break;
+		case WM_RBUTTONUP:
+			rotateTarget = false;
+			break;
 		case WM_SYSKEYUP:
 		case WM_KEYUP:
 		case WM_SYSKEYDOWN:
@@ -362,7 +383,6 @@ namespace EditorUI {
 		selectedRaceGender = RACE_GENDER::kNone;
 		selectedPlugin = "";
 		jsonLoaded = LoadPreset(presetList.at(presetCurrentIdx).path);
-		hasSetScale.clear();
 	}
 
 	void Window::ChangeCurrentPreset(int idx) {
@@ -393,7 +413,27 @@ namespace EditorUI {
 		ImGui::CreateContext();
 		imguiIO = ImGui::GetIO();
 
-		notosans = imguiIO.Fonts->AddFontFromMemoryCompressedBase85TTF(NotoSans_compressed_data_base85, 20.f, nullptr, &ranges[0]);
+		ImVector<ImWchar> ranges;
+		ImFontGlyphRangesBuilder builder;
+		builder.AddRanges(imguiIO.Fonts->GetGlyphRangesKorean());
+		builder.AddRanges(imguiIO.Fonts->GetGlyphRangesDefault());
+		builder.AddRanges(imguiIO.Fonts->GetGlyphRangesGreek());
+		builder.AddRanges(imguiIO.Fonts->GetGlyphRangesCyrillic());
+		builder.BuildRanges(&ranges);
+
+		namespace fs = std::filesystem;
+		fs::path fontPath = fs::current_path();
+		fontPath += "\\Data\\F4SE\\Plugins\\NanakoSurgeon\\Fonts\\";
+		std::string notosansPathKR = fontPath.string() + "NotoSansKR-Light.ttf";
+		std::string notosansPathJP = fontPath.string() + "NotoSansJP-Light.ttf";
+		std::string notosansPathSC = fontPath.string() + "NotoSansSC-Light.ttf";
+		std::string notosansPathTC = fontPath.string() + "NotoSansTC-Light.ttf";
+		ImFontConfig config;
+		config.MergeMode = true;
+		notosansKR = imguiIO.Fonts->AddFontFromFileTTF(notosansPathKR.c_str(), 20.f, nullptr, ranges.Data);
+		notosansJP = imguiIO.Fonts->AddFontFromFileTTF(notosansPathJP.c_str(), 20.f, &config, imguiIO.Fonts->GetGlyphRangesJapanese());
+		notosansSC = imguiIO.Fonts->AddFontFromFileTTF(notosansPathSC.c_str(), 20.f, &config, imguiIO.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+		notosansTC = imguiIO.Fonts->AddFontFromFileTTF(notosansPathTC.c_str(), 20.f, &config, imguiIO.Fonts->GetGlyphRangesChineseFull());
 		imguiIO.Fonts->Build();
 
 		ImGui::StyleColorsDark();
@@ -466,27 +506,27 @@ namespace EditorUI {
 		if (ImGui::Button(Localization::GetLocalizedPChar("str_ResetTarget"), sz)) {
 			Reset3DByFormID(previewTarget);
 		}
-		if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_ApplySelectedToTarget"), &applyToPlayer) && applyToPlayer) {
+		if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_ApplySelectedToTarget"), &applyToTarget) && applyToTarget) {
 			ApplySelectedToTarget();
 		}
 		ImGui::SameLine();
 		HelpMarker(Localization::GetLocalizedPChar("str_ApplySelectedToTarget_Help"));
-		if (applyToPlayer) {
-			RE::TESObjectREFR* refr = RE::Console::GetCurrentPickREFR().get().get();
-			RE::TESNPC* targetNPC = nullptr;
-			if (refr && refr->As<RE::Actor>()) {
-				previewTarget = refr->formID;
-				targetNPC = static_cast<RE::Actor*>(refr)->GetNPC();
-			} else {
-				previewTarget = p->formID;
-				targetNPC = p->GetNPC();
-			}
+		RE::TESObjectREFR* refr = RE::Console::GetCurrentPickREFR().get().get();
+		RE::TESNPC* targetNPC = nullptr;
+		if (refr && refr->As<RE::Actor>()) {
+			previewTarget = refr->formID;
+			targetNPC = static_cast<RE::Actor*>(refr)->GetNPC();
+		} else {
+			previewTarget = p->formID;
+			targetNPC = p->GetNPC();
+		}
+		if (applyToTarget) {
 			std::string str_PreviewTargetInfo = Localization::GetLocalizedString("str_PreviewTarget");
 			if (targetNPC) {
 				str_PreviewTargetInfo += targetNPC->GetFullName();
 				str_PreviewTargetInfo += std::format(" ({:#x})", targetNPC->formID);
 			}
-			ImGui::TextColored(ImVec4(0.f, 0.95f, 0.f, 1.f), Localization::GetLocalizedPChar("str_PreviewTargetInfo"));
+			ImGui::TextColored(ImVec4(0.f, 0.95f, 0.f, 1.f), str_PreviewTargetInfo.c_str());
 		}
 
 		if (!jsonLoaded) {
@@ -568,11 +608,9 @@ namespace EditorUI {
 									}
 									if (isGenderNodeOpen) {
 										std::string setScale_ID = genderNode_ID + "_SetScale";
-										if (hasSetScale.find(setScale_ID) == hasSetScale.end()) {
-											hasSetScale.insert(std::pair<std::string, bool>(setScale_ID, jsonData[pluginit->first][*raceit][sexit.key()].contains(str_SetScale)));
-										}
-										if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_HasSetScale"), &hasSetScale[setScale_ID])) {
-											if (!hasSetScale[setScale_ID]) {
+										bool hasSetScale = jsonData[pluginit->first][*raceit][sexit.key()].contains(str_SetScale);
+										if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_HasSetScale"), &hasSetScale)) {
+											if (hasSetScale) {
 												if (jsonData[pluginit->first][*raceit][sexit.key()].contains(str_SetScale)) {
 													jsonData[pluginit->first][*raceit][sexit.key()].erase(str_SetScale);
 												}
@@ -582,11 +620,11 @@ namespace EditorUI {
 												}
 											}
 										}
-										if (hasSetScale[setScale_ID]) {
+										if (hasSetScale) {
 											float tempScale = jsonData[pluginit->first][*raceit][sexit.key()][str_SetScale].get<float>();
 											if (ImGui::DragFloat(Localization::GetLocalizedPChar("str_Scale"), &tempScale, 0.01f, 0.01f, 10.f, "%.2f")) {
 												jsonData[pluginit->first][*raceit][sexit.key()][str_SetScale] = tempScale;
-												if (applyToPlayer) {
+												if (applyToTarget) {
 													SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
 													ApplySelectedToTarget();
 												}
@@ -600,6 +638,11 @@ namespace EditorUI {
 													if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeleteBone"))) {
 														jsonData[pluginit->first][*raceit][sexit.key()].erase(boneit.key());
 														isBoneNodeOpen = false;
+														if (applyToTarget) {
+															SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
+															Reset3DByFormID(previewTarget);
+															ApplySelectedToTarget();
+														}
 														ImGui::CloseCurrentPopup();
 													}
 													ImGui::EndPopup();
@@ -622,7 +665,7 @@ namespace EditorUI {
 																	jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraIgnoreXYZ] = true;
 																}
 															}
-															if (applyToPlayer) {
+															if (applyToTarget) {
 																SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
 																ApplySelectedToTarget();
 															}
@@ -641,7 +684,7 @@ namespace EditorUI {
 																	jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraInsertion] = true;
 																}
 															}
-															if (applyToPlayer) {
+															if (applyToTarget) {
 																SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
 																ApplySelectedToTarget();
 															}
@@ -662,7 +705,7 @@ namespace EditorUI {
 																	jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraTpOnly] = true;
 																}
 															}
-															if (applyToPlayer) {
+															if (applyToTarget) {
 																SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
 																ApplySelectedToTarget();
 															}
@@ -683,7 +726,7 @@ namespace EditorUI {
 														jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraX] = transVec4f[0];
 														jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraY] = transVec4f[1];
 														jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraZ] = transVec4f[2];
-														if (applyToPlayer) {
+														if (applyToTarget) {
 															SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
 															ApplySelectedToTarget();
 														}
@@ -694,7 +737,7 @@ namespace EditorUI {
 													}
 													if (ImGui::DragFloat(Localization::GetLocalizedPChar("str_Scale"), &boneScale, 0.01f, 0.01f, 10.f, "%.2f")) {
 														jsonData[pluginit->first][*raceit][sexit.key()][boneit.key()][str_BoneExtraScale] = boneScale;
-														if (applyToPlayer) {
+														if (applyToTarget) {
 															SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
 															ApplySelectedToTarget();
 														}
@@ -771,11 +814,9 @@ namespace EditorUI {
 							}
 							if (isNPCNodeOpen) {
 								std::string setScale_ID = npcNode_ID + "_SetScale";
-								if (hasSetScale.find(setScale_ID) == hasSetScale.end()) {
-									hasSetScale.insert(std::pair<std::string, bool>(setScale_ID, jsonData[pluginit->first][*npcit].contains(str_SetScale)));
-								}
-								if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_HasSetScale"), &hasSetScale[setScale_ID])) {
-									if (!hasSetScale[setScale_ID]) {
+								bool hasSetScale = jsonData[pluginit->first][*npcit].contains(str_SetScale);
+								if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_HasSetScale"), &hasSetScale)) {
+									if (!hasSetScale) {
 										if (jsonData[pluginit->first][*npcit].contains(str_SetScale)) {
 											jsonData[pluginit->first][*npcit].erase(str_SetScale);
 										}
@@ -785,11 +826,11 @@ namespace EditorUI {
 										}
 									}
 								}
-								if (hasSetScale[setScale_ID]) {
+								if (hasSetScale) {
 									float tempScale = jsonData[pluginit->first][*npcit][str_SetScale].get<float>();
 									if (ImGui::DragFloat(Localization::GetLocalizedPChar("str_Scale"), &tempScale, 0.01f, 0.01f, 10.f, "%.2f")) {
 										jsonData[pluginit->first][*npcit][str_SetScale] = tempScale;
-										if (applyToPlayer) {
+										if (applyToTarget) {
 											SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
 											ApplySelectedToTarget();
 										}
@@ -804,6 +845,11 @@ namespace EditorUI {
 											if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeleteBone"))) {
 												jsonData[pluginit->first][*npcit].erase(boneit.key());
 												isBoneNodeOpen = false;
+												if (applyToTarget) {
+													SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
+													Reset3DByFormID(previewTarget);
+													ApplySelectedToTarget();
+												}
 												ImGui::CloseCurrentPopup();
 											}
 											ImGui::EndPopup();
@@ -826,7 +872,7 @@ namespace EditorUI {
 															jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraIgnoreXYZ] = true;
 														}
 													}
-													if (applyToPlayer) {
+													if (applyToTarget) {
 														SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
 														ApplySelectedToTarget();
 													}
@@ -845,7 +891,7 @@ namespace EditorUI {
 															jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraInsertion] = true;
 														}
 													}
-													if (applyToPlayer) {
+													if (applyToTarget) {
 														SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
 														ApplySelectedToTarget();
 													}
@@ -866,7 +912,7 @@ namespace EditorUI {
 															jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraTpOnly] = true;
 														}
 													}
-													if (applyToPlayer) {
+													if (applyToTarget) {
 														SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
 														ApplySelectedToTarget();
 													}
@@ -887,7 +933,7 @@ namespace EditorUI {
 												jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraX] = transVec4f[0];
 												jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraY] = transVec4f[1];
 												jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraZ] = transVec4f[2];
-												if (applyToPlayer) {
+												if (applyToTarget) {
 													SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
 													ApplySelectedToTarget();
 												}
@@ -898,7 +944,7 @@ namespace EditorUI {
 											}
 											if (ImGui::DragFloat(Localization::GetLocalizedPChar("str_Scale"), &boneScale, 0.01f, 0.01f, 10.f, "%.2f")) {
 												jsonData[pluginit->first][*npcit][boneit.key()][str_BoneExtraScale] = boneScale;
-												if (applyToPlayer) {
+												if (applyToTarget) {
 													SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
 													ApplySelectedToTarget();
 												}
@@ -949,7 +995,7 @@ namespace EditorUI {
 			ImGui::InputText("", filename, 64);
 			ImGui::SameLine();
 			ImGui::Text(".json");
-			if (ImGui::Button(Localization::GetLocalizedPChar("str_Create"), ImVec2(200, 0))) {
+			if (ImGui::Button(Localization::GetLocalizedPChar("str_Create"), ImVec2(120, 0))) {
 				std::string nameStr = filename;
 				if (nameStr.length() == 0) {
 					if (!errorMsg) {
@@ -961,6 +1007,10 @@ namespace EditorUI {
 					errorMsg = false;
 					ImGui::CloseCurrentPopup();
 				}
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(Localization::GetLocalizedPChar("str_Cancel"), ImVec2(120, 0))) {
+				ImGui::CloseCurrentPopup();
 			}
 			if (errorMsg) {
 				ImGui::TextColored(ImVec4(0.95f, 0.05f, 0.05f, 1.f), Localization::GetLocalizedPChar("str_EnterText"));
@@ -1162,18 +1212,20 @@ namespace EditorUI {
 
 		if (ImGui::BeginPopupModal(Localization::GetLocalizedPChar("str_Modal_AddBone"), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 			std::vector<std::string> boneList;
+			std::unordered_map<std::string, bool> boneListDuplicateCheck;
 			static int boneCurrentIdx = 0;
 			RE::Actor* a = RE::TESForm::GetFormByID(previewTarget)->As<RE::Actor>();
 
 			if (a && a->Get3D()) {
 				RE::NiAVObject* root = a->Get3D()->GetObjectByName("Root");
-				Visit(root, [&boneList](RE::NiAVObject* obj) {
+				Visit(root, [&boneList, &boneListDuplicateCheck](RE::NiAVObject* obj) {
 					if (!obj->IsNode())
 						return false;
 
 					std::string name = obj->name.c_str();
-					if (!jsonInsertTarget->contains(name)) {
+					if (!jsonInsertTarget->contains(name) && boneListDuplicateCheck.find(name) == boneListDuplicateCheck.end()) {
 						boneList.push_back(name);
+						boneListDuplicateCheck.insert(std::pair<std::string, bool>(name, true));
 					}
 					return false;
 				});

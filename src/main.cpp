@@ -383,7 +383,8 @@ void DoScalePreview(Actor* a, float scale) {
 	if (!node)
 		return;
 
-	SetScale(a, scale);
+	WriteLocker lock(scaleQueueLock);
+	actorScaleQueue.insert(pair<uint32_t, float>(a->formID, scale));
 }
 
 void QueueScaling(Actor* a) {
