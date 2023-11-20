@@ -291,63 +291,11 @@ namespace EditorUI {
 	void Window::Reset3DByFormID(uint32_t formID) {
 		RE::Actor* a = RE::TESForm::GetFormByID(formID)->As<RE::Actor>();
 		if (a && a->Get3D()) {
-			a->Load3D(true);
-			Visit(a->Get3D(false), [](RE::NiAVObject* obj) {
-				if (!obj->IsNode())
-					return false;
-
-				std::string name{ obj->name.c_str() };
-				for (auto& c : name) {
-					c = (char)tolower(c);
-				}
-
-				if (name.find("surgeoninserted") != std::string::npos) {
-					RE::NiNode* parent = obj->parent;
-					if (parent) {
-						parent->DetachChild(obj);
-						obj->parent = nullptr;
-						if (obj->IsNode()->children.size() > 0) {
-							RE::NiAVObject* child = obj->IsNode()->children[0].get();
-							obj->IsNode()->DetachChild(child);
-							parent->AttachChild(child, true);
-							child->parent = parent;
-						}
-					}
-				}
-				return false;
-			});
-			if (a == p) {
-				Visit(a->Get3D(true), [](RE::NiAVObject* obj) {
-					if (!obj->IsNode())
-						return false;
-
-					std::string name{ obj->name.c_str() };
-					for (auto& c : name) {
-						c = (char)tolower(c);
-					}
-
-					if (name.find("surgeoninserted") != std::string::npos) {
-						RE::NiNode* parent = obj->parent;
-						if (parent) {
-							parent->DetachChild(obj);
-							obj->parent = nullptr;
-							if (obj->IsNode()->children.size() > 0) {
-								RE::NiAVObject* child = obj->IsNode()->children[0].get();
-								obj->IsNode()->DetachChild(child);
-								parent->AttachChild(child, true);
-								child->parent = parent;
-							}
-						}
-					}
-					return false;
-				});
-			}
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkeleton);
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kScale);
-			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkin);
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kFace);
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kHead);
-			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kModel);
+			RE::TaskQueueInterface::GetSingleton()->QueueUpdate3D(a);
 		}
 	}
 
@@ -610,7 +558,7 @@ namespace EditorUI {
 										std::string setScale_ID = genderNode_ID + "_SetScale";
 										bool hasSetScale = jsonData[pluginit->first][*raceit][sexit.key()].contains(str_SetScale);
 										if (ImGui::Checkbox(Localization::GetLocalizedPChar("str_HasSetScale"), &hasSetScale)) {
-											if (hasSetScale) {
+											if (!hasSetScale) {
 												if (jsonData[pluginit->first][*raceit][sexit.key()].contains(str_SetScale)) {
 													jsonData[pluginit->first][*raceit][sexit.key()].erase(str_SetScale);
 												}
