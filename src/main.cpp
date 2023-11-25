@@ -182,9 +182,7 @@ TESNPC* GetBaseNPC(Actor* a) {
 	return a->GetNPC();
 }
 
-void ApplyBoneData(NiAVObject* node, TranslationData& data, bool forced = false) {
-	if (!forced && EditorUI::Window::GetSingleton()->GetShouldDraw())
-		return;
+void ApplyBoneData(NiAVObject* node, TranslationData& data) {
 	NiNode* bone = (NiNode*)node->GetObjectByName(data.bonename);
 	if (bone) {
 		if (!data.insertion) {
@@ -231,6 +229,15 @@ void ApplyBoneData(NiAVObject* node, TranslationData& data, bool forced = false)
 			}
 		}
 	}
+}
+
+void QueueSurgery(Actor* a)
+{
+	if (EditorUI::Window::GetSingleton()->GetShouldDraw() && EditorUI::Window::GetSingleton()->GetPreviewTargetFormID() == a->formID)
+		return;
+	WriteLocker lock(surgeryQueueLock);
+	actorSurgeryQueue.push(a->formID);
+	//_MESSAGE("Adding Actor %llx to queue", a->formID);
 }
 
 void DoSurgery() {
@@ -316,17 +323,11 @@ void DoSurgeryPreview(Actor* a, vector<TranslationData> transData) {
 	if (a == p)
 		fpnode = a->Get3D(true);
 	for (auto it = transData.begin(); it != transData.end(); ++it) {
-		ApplyBoneData(node, *it, true);
+		ApplyBoneData(node, *it);
 		if (a == p && !it->tponly) {
-			ApplyBoneData(fpnode, *it, true);
+			ApplyBoneData(fpnode, *it);
 		}
 	}
-}
-
-void QueueSurgery(Actor* a) {
-	WriteLocker lock(surgeryQueueLock);
-	actorSurgeryQueue.push(a->formID);
-	//_MESSAGE("Adding Actor %llx to queue", a->formID);
 }
 
 void DoGlobalSurgery() {
@@ -336,6 +337,38 @@ void DoGlobalSurgery() {
 			Actor* a = it->get().get();
 			if (a && a->Get3D())
 				QueueSurgery(a);
+		}
+	}
+}
+
+void QueueScaling(Actor* a)
+{
+	TESNPC* npc = a->GetNPC();
+	if (npc) {
+		float scale = -1.f;
+		if (a->race) {
+			if (npc->GetSex() == 0) {
+				auto raceit = customRaceMaleScales.find(a->race->formID);
+				if (raceit != customRaceMaleScales.end()) {
+					scale = raceit->second;
+					//_MESSAGE("NPC %s (%llx, Actor %llx) Male Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+				}
+			} else {
+				auto raceit = customRaceFemaleScales.find(a->race->formID);
+				if (raceit != customRaceFemaleScales.end()) {
+					scale = raceit->second;
+					//_MESSAGE("NPC %s (%llx, Actor %llx) Female Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+				}
+			}
+		}
+		auto npcit = customNPCScales.find(GetBaseNPC(a)->formID);
+		if (npcit != customNPCScales.end()) {
+			scale = npcit->second;
+			//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
+		}
+		WriteLocker lock(scaleQueueLock);
+		if (scale >= 0.f && actorScaleQueue.find(a->formID) == actorScaleQueue.end()) {
+			actorScaleQueue.insert(pair<uint32_t, float>(a->formID, scale));
 		}
 	}
 }
@@ -385,38 +418,6 @@ void DoScalePreview(Actor* a, float scale) {
 
 	WriteLocker lock(scaleQueueLock);
 	actorScaleQueue.insert(pair<uint32_t, float>(a->formID, scale));
-}
-
-void QueueScaling(Actor* a) {
-	TESNPC* npc = a->GetNPC();
-	if (npc) {
-		float scale = -1.f;
-		if (a->race) {
-			if (npc->GetSex() == 0) {
-				auto raceit = customRaceMaleScales.find(a->race->formID);
-				if (raceit != customRaceMaleScales.end()) {
-					scale = raceit->second;
-					//_MESSAGE("NPC %s (%llx, Actor %llx) Male Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
-				}
-			}
-			else {
-				auto raceit = customRaceFemaleScales.find(a->race->formID);
-				if (raceit != customRaceFemaleScales.end()) {
-					scale = raceit->second;
-					//_MESSAGE("NPC %s (%llx, Actor %llx) Female Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
-				}
-			}
-		}
-		auto npcit = customNPCScales.find(GetBaseNPC(a)->formID);
-		if (npcit != customNPCScales.end()) {
-			scale = npcit->second;
-			//_MESSAGE("NPC %s (%llx, Actor %llx) NPC Scale %f", npc->GetFullName(), npc->formID, a->formID, scale);
-		}
-		WriteLocker lock(scaleQueueLock);
-		if (scale >= 0.f && actorScaleQueue.find(a->formID) == actorScaleQueue.end()) {
-			actorScaleQueue.insert(pair<uint32_t, float>(a->formID, scale));
-		}
-	}
 }
 
 void DoGlobalScaling() {
@@ -703,18 +704,15 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface * a_
 		if (msg->type == F4SE::MessagingInterface::kGameDataReady) {
 			InitializePlugin();
 			LoadConfigs();
-			if (EditorUI::Window::GetSingleton())
-				EditorUI::Window::GetSingleton()->LoadDefaultPreset();
+			EditorUI::Window::GetSingleton()->LoadDefaultPreset();
 		}
 		else if (msg->type == F4SE::MessagingInterface::kPostLoadGame) {
 			LoadConfigs();
-			if (EditorUI::Window::GetSingleton())
-				EditorUI::Window::GetSingleton()->Reset();
+			EditorUI::Window::GetSingleton()->Reset();
 		}
 		else if (msg->type == F4SE::MessagingInterface::kNewGame) {
 			LoadConfigs();
-			if (EditorUI::Window::GetSingleton())
-				EditorUI::Window::GetSingleton()->Reset();
+			EditorUI::Window::GetSingleton()->Reset();
 		}
 	});
 
