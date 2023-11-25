@@ -64,6 +64,7 @@ namespace EditorUI {
 	REL::Relocation<uintptr_t> ptr_RegisterClassA{ REL::ID(514993) };
 	typedef ATOM (*FnRegisterClassA)(const WNDCLASSEXA* wnd);
 	FnRegisterClassA RegisterClassA_Orig;
+	REL::Relocation<float*> ptr_deltaTime{ REL::ID(1013228) };
 
 	// Stored variables for ImGui render
 	RECT windowRect;
@@ -93,7 +94,6 @@ namespace EditorUI {
 	unordered_map<std::string, vector<std::string>> jsonRaceList;
 	unordered_map<std::string, vector<std::string>> jsonNPCList;
 	auto* jsonInsertTarget = &(jsonData);
-	uint32_t previewTarget = 0x14;
 	unordered_set<uint32_t> previewedList;
 
 	// Strings for future localization or stuff
@@ -124,7 +124,7 @@ namespace EditorUI {
 			POINT mouseDelta = { mousePos.x - lastMousePos.x, mousePos.y - lastMousePos.y };
 			if (Window::GetSingleton()->GetShouldDraw()  && rotateTarget) {
 				if (mouseDelta.x > 0 || mouseDelta.x < 0) {
-					RE::Actor* a = RE::TESForm::GetFormByID(previewTarget)->As<RE::Actor>();
+					RE::Actor* a = RE::TESForm::GetFormByID(Window::GetSingleton()->GetPreviewTargetFormID())->As<RE::Actor>();
 					if (a && a->Get3D()) {
 						a->data.angle.z -= (float)mouseDelta.x / 100.f;
 					}
@@ -291,10 +291,10 @@ namespace EditorUI {
 	void Window::Reset3DByFormID(uint32_t formID) {
 		RE::Actor* a = RE::TESForm::GetFormByID(formID)->As<RE::Actor>();
 		if (a && a->Get3D()) {
-			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkeleton);
-			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kScale);
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kFace);
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kHead);
+			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kScale);
+			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkeleton);
 			RE::TaskQueueInterface::GetSingleton()->QueueUpdate3D(a);
 		}
 	}
@@ -398,8 +398,16 @@ namespace EditorUI {
 		Window::imguiInitialized = true;
 	}
 
-	float tempFloat = 0.f;
 	void Window::Draw() {
+		if (this->globalQueued) {
+			if (this->globalQueueTimer > 0.25f) {
+				DoGlobalSurgery();
+				DoGlobalScaling();
+				QueueSurgery(p);
+				QueueScaling(p);
+			}
+			this->globalQueueTimer += *ptr_deltaTime;
+		}
 		if (!this->shouldDraw)
 			return;
 
@@ -475,6 +483,17 @@ namespace EditorUI {
 				str_PreviewTargetInfo += std::format(" ({:#x})", targetNPC->formID);
 			}
 			ImGui::TextColored(ImVec4(0.f, 0.95f, 0.f, 1.f), str_PreviewTargetInfo.c_str());
+			if (previewQueued) {
+				RE::Actor* a = RE::TESForm::GetFormByID(previewTarget)->As<RE::Actor>();
+				if (!a || (!a->Get3DUpdateFlag(RE::RESET_3D_FLAGS::kHead) && previewQueueTimer > 0.25f)) {
+					previewQueued = false;
+					previewQueueTimer = 0.f;
+					if (a) {
+						ApplySelectedToTarget();
+					}
+				}
+				previewQueueTimer += *ptr_deltaTime;
+			}
 		}
 
 		if (!jsonLoaded) {
@@ -497,7 +516,12 @@ namespace EditorUI {
 						ImGui::CloseCurrentPopup();
 					}
 					if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeletePlugin"))) {
-						jsonData.erase(pluginit->first);
+						for (auto raceit = pluginit->second.begin(); raceit != pluginit->second.end(); ++raceit) {
+							jsonData[pluginit->first].erase(*raceit);
+						}
+						if (jsonData[pluginit->first].empty()) {
+							jsonData.erase(pluginit->first);
+						}
 						jsonRaceList.erase(pluginit);
 						isPluginNodeOpen = false;
 						ImGui::CloseCurrentPopup();
@@ -589,7 +613,8 @@ namespace EditorUI {
 														if (applyToTarget) {
 															SetSelected(pluginit->first, *raceit, FORM_TYPE::kRace, sexit.key());
 															Reset3DByFormID(previewTarget);
-															ApplySelectedToTarget();
+															previewQueued = true;
+															previewQueueTimer = 0.f;
 														}
 														ImGui::CloseCurrentPopup();
 													}
@@ -721,7 +746,12 @@ namespace EditorUI {
 						ImGui::CloseCurrentPopup();
 					}
 					if (ImGui::Selectable(Localization::GetLocalizedPChar("str_DeletePlugin"))) {
-						jsonData.erase(pluginit->first);
+						for (auto npcit = pluginit->second.begin(); npcit != pluginit->second.end(); ++npcit) {
+							jsonData[pluginit->first].erase(*npcit);
+						}
+						if (jsonData[pluginit->first].empty()) {
+							jsonData.erase(pluginit->first);
+						}
 						jsonNPCList.erase(pluginit);
 						isPluginNodeOpen = false;
 						ImGui::CloseCurrentPopup();
@@ -796,7 +826,8 @@ namespace EditorUI {
 												if (applyToTarget) {
 													SetSelected(pluginit->first, *npcit, FORM_TYPE::kNPC, "");
 													Reset3DByFormID(previewTarget);
-													ApplySelectedToTarget();
+													previewQueued = true;
+													previewQueueTimer = 0.f;
 												}
 												ImGui::CloseCurrentPopup();
 											}
@@ -1261,23 +1292,26 @@ namespace EditorUI {
 		this->shouldDraw = !this->shouldDraw;
 		::ShowCursor(this->shouldDraw);
 		RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = this->shouldDraw;
-		if (this->shouldDraw)
+		if (this->shouldDraw) {
+			this->globalQueued = false;
 			RefreshFiles();
+		}
 		else {
+			LoadConfigs();
+			this->previewTarget = 0;
 			for (uint32_t formID : previewedList) {
 				Reset3DByFormID(formID);
 			}
 			previewedList.clear();
-			LoadConfigs();
-			DoGlobalSurgery();
-			DoGlobalScaling();
-			QueueSurgery(p);
-			QueueScaling(p);
+			this->globalQueued = true;
+			this->globalQueueTimer = 0.f;
 		}
 	}
 
 	void Window::Reset() {
 		this->shouldDraw = false;
+		this->previewQueued = false;
+		this->previewQueueTimer = 0.f;
 		::ShowCursor(this->shouldDraw);
 		RE::ControlMap::GetSingleton()->ignoreKeyboardMouse = this->shouldDraw;
 

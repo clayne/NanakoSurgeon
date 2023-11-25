@@ -57,6 +57,11 @@ namespace EditorUI {
 	class Window {
 	protected:
 		static Window* instance;
+		uint32_t previewTarget = 0x14;
+		bool previewQueued = false;
+		float previewQueueTimer = 0.f;
+		bool globalQueued = false;
+		float globalQueueTimer = 0.f;
 		bool shouldDraw = false;
 		void BuildBoneData(auto json, std::vector<TranslationData>& map, float& s);
 		void SetSelected(std::string plugin, std::string formID, FORM_TYPE formType, std::string genderStr);
@@ -77,6 +82,9 @@ namespace EditorUI {
 			if (!instance)
 				instance = new Window();
 			return instance;
+		}
+		inline uint32_t GetPreviewTargetFormID() {
+			return previewTarget;
 		}
 		void Draw();
 		void ToggleShow();
