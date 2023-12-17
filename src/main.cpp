@@ -12,17 +12,6 @@ using std::string;
 using std::unordered_map;
 using std::vector;
 
-namespace RE {
-	class NiUpdateData {
-	public:
-		uint32_t unk00;
-		uint32_t unk04;
-		uint64_t unk08;
-		uint64_t unk10;
-		uint32_t unk18;
-	};
-}
-
 REL::Relocation<uint64_t*> ptr_engineTime{ REL::ID(1280610) };
 REL::Relocation<ProcessLists*> ptr_processLists{ REL::ID(474742) };
 REL::Relocation<uintptr_t> ptr_RunActorUpdates{ REL::ID(556439), 0x17 };

@@ -295,7 +295,7 @@ namespace EditorUI {
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kHead);
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kScale);
 			a->Set3DUpdateFlag(RE::RESET_3D_FLAGS::kSkeleton);
-			RE::TaskQueueInterface::GetSingleton()->QueueUpdate3D(a);
+			RE::TaskQueueInterface::GetSingleton()->QueueUpdate3D(a, 0);
 		}
 	}
 
